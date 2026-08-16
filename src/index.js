@@ -48,10 +48,12 @@ const conn = mongoose.createConnection(uri, { dbName: 'rolodex', serverSelection
 const DeviceState = conn.model('DeviceState', new mongoose.Schema({
   deviceId: { type: String, required: true, unique: true, index: true },
   deviceName: { type: String, default: '' },
+  room: { type: String, default: '' }, // demo share code — links Tom's device to yours live
   lastSyncAt: { type: Date, default: Date.now },
   contactsCount: { type: Number, default: 0 },
   followUpsCount: { type: Number, default: 0 },
   contactNames: { type: [String], default: [] },
+  contacts: { type: [mongoose.Schema.Types.Mixed], default: [] }, // full contact list (rolodex-server storage)
   sample: { type: mongoose.Schema.Types.Mixed, default: null },
 }, { timestamps: true }));
 
@@ -65,7 +67,7 @@ app.get('/api/rolodex/health', (_req, res) => {
 // The app talks to the DB here — the demo's "it communicates" moment.
 app.post('/api/rolodex/sync', async (req, res) => {
   try {
-    const { deviceId, contacts = [], followUps = [], deviceName = '' } = req.body || {};
+    const { deviceId, contacts = [], followUps = [], deviceName = '', room = '' } = req.body || {};
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' });
     const names = (contacts || [])
       .map((c) => (c && (c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`))) ? String(c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`)) : null)
@@ -76,10 +78,14 @@ app.post('/api/rolodex/sync', async (req, res) => {
       {
         $set: {
           deviceName: String(deviceName || deviceId).slice(0, 60),
+          room: String(room || '').trim().toUpperCase().slice(0, 24),
           lastSyncAt: new Date(),
           contactsCount: (contacts || []).length,
           followUpsCount: (followUps || []).length,
           contactNames: names,
+          // 2026-08-16: the FULL contact list is stored — "rolodex-server" is a
+          // real storage location (the app restores from here), not a mirror.
+          contacts: (contacts || []).slice(0, 500),
           sample: {
             first: (contacts || [])[0] ? (contacts[0].name || (contacts[0].firstName && `${contacts[0].firstName} ${contacts[0].lastName || ''}`) || '(unnamed)') : null,
             dueToday: (followUps || []).filter((f) => f && f.overdue === true).length,
@@ -95,11 +101,19 @@ app.post('/api/rolodex/sync', async (req, res) => {
   }
 });
 
+// Full restore — a device keeps its contacts on the Rolodex server.
 app.get('/api/rolodex/state/:deviceId', async (req, res) => {
   try {
     const d = await DeviceState.findOne({ deviceId: req.params.deviceId }).lean();
     if (!d) return res.status(404).json({ message: 'no state yet' });
-    res.json({ deviceId: d.deviceId, lastSyncAt: d.lastSyncAt, contactsCount: d.contactsCount, followUpsCount: d.followUpsCount });
+    res.json({
+      deviceId: d.deviceId,
+      room: d.room || '',
+      lastSyncAt: d.lastSyncAt,
+      contactsCount: d.contactsCount,
+      followUpsCount: d.followUpsCount,
+      contacts: d.contacts || [],
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
