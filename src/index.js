@@ -1,0 +1,159 @@
+// src/index.js — Rolodex sync backend (2026-08-16)
+// A FRESH `rolodex` database (separate from Zyppar's `zyppar` db — on the same
+// paid cluster, or a future dedicated Atlas account via MONGO_DB_URI_ROLODEX).
+// YARN ONLY. Minimal surface for the one-chance demo:
+//   POST /api/rolodex/sync   { deviceId, contacts[], followUps[], deviceName }
+//                            -> upsert the device's latest state (the app talks
+//                               to the DB the moment it launches).
+//   GET  /api/rolodex/live   -> the investor "peek" view: a self-contained HTML
+//                               page showing every synced device + last sync +
+//                               counts, auto-refreshing — proof the product is
+//                               alive and communicating RIGHT NOW.
+//   GET  /api/rolodex/health -> liveness for the droplet deploy.
+//   GET  /api/rolodex/state/:deviceId -> the device's stored state (read-only).
+const fs = require('fs');
+const express = require('express');
+const mongoose = require('mongoose');
+
+function resolveMongoUri() {
+  if (process.env.MONGO_DB_URI_ROLODEX) return process.env.MONGO_DB_URI_ROLODEX;
+  // Droplet-safe fallbacks (same pattern as the Zyppar scripts): the fresh
+  // `rolodex` database on the existing paid cluster.
+  const candidates = ['D:/TODOs/db-tools-tmp/zyppar.env', '.env'];
+  for (const p of candidates) {
+    try {
+      const t = fs.readFileSync(p, 'utf8');
+      const m = t.match(/^MONGO_DB_URI_PAID=["']?([^\r\n"']+)/m);
+      if (m) {
+        const base = m[1].replace(/\/[^/]*\?/, '/?'); // strip any db name → params
+        const sep = base.includes('?') ? '&' : '?';
+        return `${base}${sep}appName=rolodex` + (base.includes('?') ? '' : '');
+      }
+    } catch { /* try next */ }
+  }
+  return '';
+}
+
+const uri = resolveMongoUri();
+const port = Number(process.env.PORT || 4411);
+
+if (!uri) {
+  console.error('MONGO_DB_URI_ROLODEX not found (env var or repo .env).');
+  process.exit(1);
+}
+
+// The fresh database is NAMED `rolodex` (never touches the Zyppar `zyppar` db).
+const conn = mongoose.createConnection(uri, { dbName: 'rolodex', serverSelectionTimeoutMS: 20000 });
+
+const DeviceState = conn.model('DeviceState', new mongoose.Schema({
+  deviceId: { type: String, required: true, unique: true, index: true },
+  deviceName: { type: String, default: '' },
+  lastSyncAt: { type: Date, default: Date.now },
+  contactsCount: { type: Number, default: 0 },
+  followUpsCount: { type: Number, default: 0 },
+  contactNames: { type: [String], default: [] },
+  sample: { type: mongoose.Schema.Types.Mixed, default: null },
+}, { timestamps: true }));
+
+const app = express();
+app.use(express.json({ limit: '5mb' }));
+
+app.get('/api/rolodex/health', (_req, res) => {
+  res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', at: new Date().toISOString() });
+});
+
+// The app talks to the DB here — the demo's "it communicates" moment.
+app.post('/api/rolodex/sync', async (req, res) => {
+  try {
+    const { deviceId, contacts = [], followUps = [], deviceName = '' } = req.body || {};
+    if (!deviceId) return res.status(400).json({ message: 'deviceId required' });
+    const names = (contacts || [])
+      .map((c) => (c && (c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`))) ? String(c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`)) : null)
+      .filter(Boolean)
+      .slice(0, 40);
+    await DeviceState.updateOne(
+      { deviceId },
+      {
+        $set: {
+          deviceName: String(deviceName || deviceId).slice(0, 60),
+          lastSyncAt: new Date(),
+          contactsCount: (contacts || []).length,
+          followUpsCount: (followUps || []).length,
+          contactNames: names,
+          sample: {
+            first: (contacts || [])[0] ? (contacts[0].name || (contacts[0].firstName && `${contacts[0].firstName} ${contacts[0].lastName || ''}`) || '(unnamed)') : null,
+            dueToday: (followUps || []).filter((f) => f && f.overdue === true).length,
+          },
+        },
+      },
+      { upsert: true }
+    );
+    res.json({ ok: true, deviceId, syncedAt: new Date().toISOString() });
+  } catch (err) {
+    console.error('[rolodex/sync]', err.message);
+    res.status(500).json({ message: 'sync failed' });
+  }
+});
+
+app.get('/api/rolodex/state/:deviceId', async (req, res) => {
+  try {
+    const d = await DeviceState.findOne({ deviceId: req.params.deviceId }).lean();
+    if (!d) return res.status(404).json({ message: 'no state yet' });
+    res.json({ deviceId: d.deviceId, lastSyncAt: d.lastSyncAt, contactsCount: d.contactsCount, followUpsCount: d.followUpsCount });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// The investor peek view — read-only, auto-refreshing, no account.
+app.get('/api/rolodex/live', async (_req, res) => {
+  try {
+    const devices = await DeviceState.find({}).sort({ lastSyncAt: -1 }).limit(50).lean();
+    const total = await DeviceState.countDocuments();
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(peekPage(devices, total));
+  } catch (err) {
+    res.status(500).send(`<h1>live unavailable</h1><p>${err.message}</p>`);
+  }
+});
+
+function peekPage(devices, total) {
+  const rows = devices
+    .map((d) => {
+      const t = d.lastSyncAt ? new Date(d.lastSyncAt).toLocaleTimeString() : '—';
+      return `<tr>
+        <td><b>${escapeHtml(d.deviceName || d.deviceId)}</b><br/><span class="dim">${escapeHtml(String(d.deviceId).slice(0, 18))}</span></td>
+        <td>${escapeHtml(t)}</td>
+        <td>${d.contactsCount ?? 0}</td>
+        <td>${d.followUpsCount ?? 0}</td>
+        <td class="dim">${escapeHtml((d.contactNames || []).slice(0, 4).join(', ') || '—')}</td>
+      </tr>`;
+    })
+    .join('\n');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rolodex — Live</title><style>
+body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6e8f0;margin:0;padding:24px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:13px;color:#8b93b0;font-weight:400;margin:0 0 20px}
+.badge{display:inline-block;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;border-radius:20px;padding:3px 10px;font-size:12px;margin-left:8px}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #21262d}th{color:#8b93b0;font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.dim{color:#8b93b0;font-size:12px}.live{color:#3fb950;font-weight:600}
+.foot{color:#8b93b0;font-size:12px;margin-top:20px}
+</style></head><body>
+<h1>Rolodex <span class="badge live">● LIVE</span></h1>
+<h2>Every device that talks to the fresh <code>rolodex</code> database — auto-refreshing every 5s.</h2>
+<table><thead><tr><th>Device</th><th>Last sync</th><th>Contacts</th><th>Follow-ups</th><th>Recent names</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="5" class="dim">Waiting for the first device to sync…</td></tr>'}</tbody></table>
+<div class="foot">${total} device(s) synced · <span id="clock">—</span></div>
+<script>setInterval(()=>{fetch('/api/rolodex/live',{headers:{Accept:'text/html'}}).then(r=>r.text()).then(h=>{const m=h.match(/<tbody>([\\s\\S]*?)<\\/tbody>/);if(m)document.querySelector('tbody').innerHTML=m[1];document.getElementById('clock').textContent=new Date().toLocaleTimeString();}).catch(()=>{});},5000);</script>
+</body></html>`;
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+conn.on('connected', () => console.log('[rolodex] connected to the fresh rolodex db'));
+conn.on('error', (e) => console.error('[rolodex] db error:', e.message));
+
+app.listen(port, () => console.log(`[rolodex] listening on :${port}`));
