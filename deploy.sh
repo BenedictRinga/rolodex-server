@@ -12,8 +12,15 @@ cd "$DEPLOY_DIR" || exit 1
 
 echo "Resetting local changes and pulling updates from origin main..."
 git fetch origin
-git reset --hard origin/main
-git pull origin main
+# Prefer main; fall back to master for repos pushed before the rename.
+if git rev-parse --verify origin/main >/dev/null 2>&1; then
+  BRANCH="main"
+else
+  BRANCH="master"
+fi
+echo "Using branch: $BRANCH"
+git reset --hard "origin/$BRANCH"
+git pull origin "$BRANCH"
 
 echo "Installing dependencies (yarn only)..."
 yarn
