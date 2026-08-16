@@ -12,8 +12,10 @@
 //   GET  /api/rolodex/health -> liveness for the droplet deploy.
 //   GET  /api/rolodex/state/:deviceId -> the device's stored state (read-only).
 const fs = require('fs');
+const http = require('http');
 const express = require('express');
 const mongoose = require('mongoose');
+const { Server } = require('socket.io');
 
 function resolveMongoUri() {
   if (process.env.MONGO_DB_URI_ROLODEX) return process.env.MONGO_DB_URI_ROLODEX;
@@ -62,6 +64,12 @@ app.use(express.json({ limit: '5mb' }));
 
 app.get('/api/rolodex/health', (_req, res) => {
   res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', at: new Date().toISOString() });
+});
+
+// 2026-08-16: the update check — the app polls this and compares against its
+// bundled version; a critical difference shows a polite notice in Settings.
+app.get('/api/rolodex/version', (_req, res) => {
+  res.json({ version: require('../package.json').version || '0.0.0', at: new Date().toISOString() });
 });
 
 // The app talks to the DB here — the demo's "it communicates" moment.
@@ -170,4 +178,38 @@ function escapeHtml(s) {
 conn.on('connected', () => console.log('[rolodex] connected to the fresh rolodex db'));
 conn.on('error', (e) => console.error('[rolodex] db error:', e.message));
 
-app.listen(port, () => console.log(`[rolodex] listening on :${port}`));
+// 2026-08-16 SOCKET CHAT: real-time text chat across devices in a demo room —
+// the investor sees a message they send on one device appear on the other,
+// immediately. Rooms are the shared demo room code; payloads are minimal.
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, { cors: { origin: '*' } });
+
+io.on('connection', (socket) => {
+  socket.on('chat:join', (data) => {
+    const room = String(data?.room || '').trim();
+    const name = String(data?.name || 'Someone').slice(0, 40);
+    if (!room) return;
+    socket.join('room:' + room);
+    socket.data.chatRoom = room;
+    socket.data.chatName = name;
+    socket.to('room:' + room).emit('chat:joined', { name, ts: Date.now() });
+  });
+
+  socket.on('chat:message', (data) => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    const text = String(data?.text || '').slice(0, 500).trim();
+    if (!text) return;
+    const payload = { room, name: socket.data.chatName || 'Someone', text, ts: Date.now() };
+    socket.to('room:' + room).emit('chat:message', payload);
+    socket.emit('chat:ack', { ts: payload.ts });
+  });
+
+  socket.on('disconnect', () => {
+    if (socket.data.chatRoom) {
+      socket.to('room:' + socket.data.chatRoom).emit('chat:left', { name: socket.data.chatName, ts: Date.now() });
+    }
+  });
+});
+
+httpServer.listen(port, () => console.log(`[rolodex] listening on :${port} (http + socket.io)`));
