@@ -182,7 +182,9 @@ conn.on('error', (e) => console.error('[rolodex] db error:', e.message));
 // the investor sees a message they send on one device appear on the other,
 // immediately. Rooms are the shared demo room code; payloads are minimal.
 const httpServer = http.createServer(app);
-const io = new Server(httpServer, { cors: { origin: '*' } });
+// 2026-08-16: dedicated /socket-rolodex/ path - Zyppar's socket.io owns
+// /socket.io -> :3001 on this same nginx; a shared path would clash.
+const io = new Server(httpServer, { cors: { origin: '*' }, path: '/socket-rolodex/' });
 
 io.on('connection', (socket) => {
   socket.on('chat:join', (data) => {
