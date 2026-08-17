@@ -68,6 +68,44 @@ app.get('/api/rolodex/health', (_req, res) => {
 
 // 2026-08-16: the update check — the app polls this and compares against its
 // bundled version; a critical difference shows a polite notice in Settings.
+// 2026-08-16 BILLING: Stripe Checkout for the two tiers.
+// Basic () = contact manager + the Assistant (5 AI interventions/month);
+// Confidante () = the full AI agent all month. Without STRIPE_SECRET_KEY
+// the endpoint answers 501 so the app can show the connect-Stripe state.
+app.post('/api/rolodex/billing/checkout', async (req, res) => {
+  try {
+    const plan = String(req.body?.plan || '');
+    const plans = {
+      basic: { name: 'Rolodex Basic', amount: 100, id: 'rolodex-basic' },
+      confidante: { name: 'RolodexAI Confidante', amount: 500, id: 'rolodex-confidante' },
+    };
+    const cfg = plans[plan];
+    if (!cfg) return res.status(400).json({ error: 'Unknown plan' });
+    if (!process.env.STRIPE_SECRET_KEY) {
+      return res.status(501).json({ error: 'Stripe is not connected - add STRIPE_SECRET_KEY' });
+    }
+    const stripe = new (require('stripe'))(process.env.STRIPE_SECRET_KEY);
+    const origin = req.headers.origin || 'https://zyppar.com';
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      line_items: [{
+        price_data: {
+          currency: 'usd',
+          product_data: { name: cfg.name, metadata: { planId: cfg.id } },
+          unit_amount: cfg.amount,
+          recurring: { interval: 'month' },
+        },
+        quantity: 1,
+      }],
+      success_url: origin + '/rolodex/?checkout=success&plan=' + plan,
+      cancel_url: origin + '/rolodex/?checkout=cancelled',
+    });
+    res.json({ url: session.url });
+  } catch (e) {
+    res.status(500).json({ error: 'Checkout failed: ' + (e?.message || 'unknown') });
+  }
+});
+
 app.get('/api/rolodex/version', (_req, res) => {
   res.json({ version: require('../package.json').version || '0.0.0', at: new Date().toISOString() });
 });
