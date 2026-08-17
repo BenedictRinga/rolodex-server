@@ -321,7 +321,7 @@ const httpServer = http.createServer(app);
 const io = new Server(httpServer, { cors: { origin: '*' }, path: '/socket-rolodex/' });
 
 io.on('connection', (socket) => {
-  socket.on('chat:join', (data) => {
+  socket.on('chat:join', async (data) => {
     const room = String(data?.room || '').trim();
     const name = String(data?.name || 'Someone').slice(0, 40);
     if (!room) return;
@@ -329,6 +329,11 @@ io.on('connection', (socket) => {
     socket.data.chatRoom = room;
     socket.data.chatName = name;
     socket.to('room:' + room).emit('chat:joined', { name, ts: Date.now() });
+    // 2026-08-17 PRESENCE: tell the joiner who is already here.
+    try {
+      const peers = await io.in('room:' + room).fetchSockets();
+      socket.emit('chat:present', { count: Math.max(0, peers.length - 1) });
+    } catch { socket.emit('chat:present', { count: 0 }); }
   });
 
   socket.on('chat:message', (data) => {
@@ -374,6 +379,11 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (socket.data.chatRoom) {
       socket.to('room:' + socket.data.chatRoom).emit('chat:left', { name: socket.data.chatName, ts: Date.now() });
+      try {
+        io.in('room:' + socket.data.chatRoom).fetchSockets().then((peers) => {
+          socket.to('room:' + socket.data.chatRoom).emit('chat:present', { count: Math.max(0, peers.length - 1) });
+        }).catch(() => {});
+      } catch {}
     }
   });
 });
