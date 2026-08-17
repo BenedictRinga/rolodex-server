@@ -106,6 +106,64 @@ app.post('/api/rolodex/billing/checkout', async (req, res) => {
   }
 });
 
+// 2026-08-16 AI COMPOSE PROXY: the user chooses which AI engine Rolodex
+// uses to deliver the confidante (Rolodex's own on-device engine, DeepSeek,
+// or Grok). The keys are ROLODEX's (env DEEPSEEK_API_KEY / GROK_API_KEY) -
+// the user never brings a key. The briefing passes through transiently and is
+// never stored; the on-device engine never calls here.
+app.post('/api/rolodex/ai/compose', async (req, res) => {
+  try {
+    const engine = String(req.body?.engine || '');
+    const briefing = String(req.body?.briefing || '').slice(0, 4000);
+    if (!briefing) return res.status(400).json({ error: 'No briefing' });
+    if (engine === 'deepseek') {
+      if (!process.env.DEEPSEEK_API_KEY) return res.status(501).json({ error: 'DeepSeek key not configured on the Rolodex server' });
+      const r = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.DEEPSEEK_API_KEY },
+        body: JSON.stringify({
+          model: 'deepseek-chat',
+          messages: [
+            { role: 'system', content: 'You are RolodexAI, a confidential secretary. You proffer messages; the user hits Send. Keep it warm, human, one paragraph, in the user\'s voice.' },
+            { role: 'user', content: briefing },
+          ],
+          max_tokens: 220,
+          temperature: 0.7,
+        }),
+      });
+      if (!r.ok) return res.status(502).json({ error: 'DeepSeek upstream ' + r.status });
+      const data = await r.json();
+      const draft = data?.choices?.[0]?.message?.content?.trim();
+      if (!draft) return res.status(502).json({ error: 'DeepSeek empty reply' });
+      return res.json({ draft });
+    }
+    if (engine === 'grok') {
+      if (!process.env.GROK_API_KEY) return res.status(501).json({ error: 'Grok key not configured on the Rolodex server' });
+      const r = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.GROK_API_KEY },
+        body: JSON.stringify({
+          model: 'grok-2-latest',
+          messages: [
+            { role: 'system', content: 'You are RolodexAI, a confidential secretary. You proffer messages; the user hits Send. Keep it warm, human, one paragraph, in the user\'s voice.' },
+            { role: 'user', content: briefing },
+          ],
+          max_tokens: 220,
+          temperature: 0.7,
+        }),
+      });
+      if (!r.ok) return res.status(502).json({ error: 'Grok upstream ' + r.status });
+      const data = await r.json();
+      const draft = data?.choices?.[0]?.message?.content?.trim();
+      if (!draft) return res.status(502).json({ error: 'Grok empty reply' });
+      return res.json({ draft });
+    }
+    return res.status(400).json({ error: 'Unknown engine' });
+  } catch (e) {
+    res.status(500).json({ error: 'AI compose failed: ' + (e?.message || 'unknown') });
+  }
+});
+
 app.get('/api/rolodex/version', (_req, res) => {
   res.json({ version: require('../package.json').version || '0.0.0', at: new Date().toISOString() });
 });
