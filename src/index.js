@@ -315,6 +315,24 @@ io.on('connection', (socket) => {
     socket.to('room:' + room).emit('chat:read', { room, key: String(data?.key || '') });
   });
 
+  socket.on('chat:react', (data) => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    socket.to('room:' + room).emit('chat:react', {
+      room, key: String(data?.key || ''), messageId: String(data?.messageId || ''),
+      emoji: String(data?.emoji || ''), name: socket.data.chatName || 'Someone',
+    });
+  });
+
+  socket.on('appointment:invite', (data) => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    socket.to('room:' + room).emit('appointment:invite', {
+      room, key: String(data?.key || ''), title: String(data?.title || '').slice(0, 80),
+      when: String(data?.when || ''), from: socket.data.chatName || 'Someone',
+    });
+  });
+
   socket.on('disconnect', () => {
     if (socket.data.chatRoom) {
       socket.to('room:' + socket.data.chatRoom).emit('chat:left', { name: socket.data.chatName, ts: Date.now() });
