@@ -168,6 +168,44 @@ app.get('/api/rolodex/version', (_req, res) => {
   res.json({ version: require('../package.json').version || '0.0.0', at: new Date().toISOString() });
 });
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * 2026-08-17 THE DROPBOX MOMENT — invites.
+ * When the counterparty does NOT have Rolodex, the appointment/message is
+ * delivered through the channels they already use (WhatsApp / email / SMS /
+ * X / copy-link). The share URL carries a short token; clicking it opens the
+ * PWA, which fetches the invite and shows the landing card. The invite store
+ * is a TTL in-memory map (48h) — production can move it to Mongo without
+ * changing the API shape.
+ * ──────────────────────────────────────────────────────────────────────────── */
+const crypto = require('crypto');
+const invites = new Map(); // token -> { from, room, kind, title, when, text, createdAt }
+const INVITE_TTL_MS = 48 * 3600_000;
+
+function inviteToken() {
+  return crypto.randomBytes(4).toString('hex');
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [t, inv] of invites) {
+    if (now - inv.createdAt > INVITE_TTL_MS) invites.delete(t);
+  }
+}, 3600_000).unref();
+
+app.post('/api/rolodex/invites', (req, res) => {
+  const { from = '', room = '', kind = 'message', title = '', when = '', text = '' } = req.body || {};
+  if (!from || !room) return res.status(400).json({ error: 'from + room required' });
+  const token = inviteToken();
+  invites.set(token, { from: String(from).slice(0, 60), room: String(room).slice(0, 60), kind: kind === 'appointment' ? 'appointment' : 'message', title: String(title).slice(0, 120), when: String(when).slice(0, 32), text: String(text).slice(0, 600), createdAt: Date.now() });
+  res.json({ ok: true, token, url: 'https://zyppar.com/rolodex/?invite=' + token });
+});
+
+app.get('/api/rolodex/invites/:token', (req, res) => {
+  const inv = invites.get(String(req.params.token || ''));
+  if (!inv) return res.status(404).json({ error: 'Invite expired or not found' });
+  res.json({ ok: true, invite: { ...inv, token: req.params.token } });
+});
+
 // The app talks to the DB here — the demo's "it communicates" moment.
 app.post('/api/rolodex/sync', async (req, res) => {
   try {
