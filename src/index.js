@@ -303,6 +303,12 @@ io.on('connection', (socket) => {
     socket.emit('chat:ack', { ts: payload.ts });
   });
 
+  socket.on('chat:typing', () => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    socket.to('room:' + room).emit('chat:typing', { room, name: socket.data.chatName || 'Someone' });
+  });
+
   socket.on('disconnect', () => {
     if (socket.data.chatRoom) {
       socket.to('room:' + socket.data.chatRoom).emit('chat:left', { name: socket.data.chatName, ts: Date.now() });
