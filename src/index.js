@@ -229,7 +229,9 @@ app.post('/api/rolodex/sync', async (req, res) => {
           // real storage location (the app restores from here), not a mirror.
           contacts: (contacts || []).slice(0, 500),
           sample: {
-            first: (contacts || [])[0] ? (contacts[0].name || (contacts[0].firstName && `${contacts[0].firstName} ${contacts[0].lastName || ''}`) || '(unnamed)') : null,
+            first: (contacts || [])[0]
+              ? String((contacts[0] && (contacts[0].name?.display || contacts[0].name)) || (contacts[0].firstName && `${contacts[0].firstName} ${contacts[0].lastName || ''}`) || '(unnamed)')
+              : null,
             dueToday: (followUps || []).filter((f) => f && f.overdue === true).length,
           },
         },
