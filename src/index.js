@@ -206,11 +206,49 @@ app.get('/api/rolodex/invites/:token', (req, res) => {
   res.json({ ok: true, invite: { ...inv, token: req.params.token } });
 });
 
+
+// 2026-08-18 CHAT AWARENESS: is this number a Rolodex user? The sender's app
+// consults this BEFORE sending, so it can tell the truth - the message lands
+// in-app, or the share/invite path is the honest answer.
+app.get('/api/rolodex/users/lookup', async (req, res) => {
+  try {
+    const phone = String(req.query.phone || '').trim();
+    if (!phone) return res.status(400).json({ error: 'phone required' });
+    const u = await RolodexUser.findOne({ phone }).lean();
+    res.json({ ok: true, isUser: !!u, name: u?.name || '', room: u?.room || '' });
+  } catch (err) {
+    console.error('[rolodex/users/lookup]', err.message);
+    res.status(500).json({ error: 'lookup failed' });
+  }
+});
+
+// 2026-08-18 THE INVESTOR GATE: a requesting investor leaves their details
+// and receives the access on the spot - the gate is the exclusivity mechanic.
+app.post('/api/rolodex/investor-requests', async (req, res) => {
+  try {
+    const { name = '', email = '', note = '' } = req.body || {};
+    if (!String(email || '').trim()) return res.status(400).json({ error: 'email required' });
+    await InvestorRequest.create({ name: String(name).slice(0, 80), email: String(email).trim().slice(0, 120), note: String(note).slice(0, 300) });
+    res.json({ ok: true, access: 'northstar' }); // dispensed on request
+  } catch (err) {
+    console.error('[rolodex/investor-requests]', err.message);
+    res.status(500).json({ error: 'request failed' });
+  }
+});
+
 // The app talks to the DB here — the demo's "it communicates" moment.
 app.post('/api/rolodex/sync', async (req, res) => {
   try {
-    const { deviceId, contacts = [], followUps = [], deviceName = '', room = '' } = req.body || {};
+    const { deviceId, contacts = [], followUps = [], deviceName = '', room = '', ownerPhone = '', ownerName = '' } = req.body || {};
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' });
+    // 2026-08-18 THE USERS DB: the sync registers the device's identity
+    if (ownerPhone) {
+      await RolodexUser.updateOne(
+        { phone: String(ownerPhone).trim() },
+        { $set: { deviceId, room: String(room || '').trim().toUpperCase().slice(0, 24), name: String(ownerName || deviceName || '').slice(0, 60), lastSeenAt: new Date() } },
+        { upsert: true }
+      );
+    }
     const names = (contacts || [])
       .map((c) => (c && (c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`))) ? String(c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`)) : null)
       .filter(Boolean)
