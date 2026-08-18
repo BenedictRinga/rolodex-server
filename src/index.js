@@ -39,6 +39,23 @@ function resolveMongoUri() {
 const uri = resolveMongoUri();
 const port = Number(process.env.PORT || 4411);
 
+// 2026-08-18 AI KEYS: the app never brings a key — Rolodex holds them on the
+// server. Read from process.env first, then from the same .env file the deploy
+// script already maintains for Mongo, so adding DEEPSEEK_API_KEY=... is a
+// one-line edit on the droplet (no new dependency, no dotenv).
+function envVar(name) {
+  if (process.env[name]) return process.env[name];
+  const candidates = ['D:/TODOs/db-tools-tmp/zyppar.env', '.env'];
+  for (const p of candidates) {
+    try {
+      const t = fs.readFileSync(p, 'utf8');
+      const m = t.match(new RegExp('^' + name + '=[\"\']?([^\\r\\n\"\']+)', 'm'));
+      if (m) return m[1];
+    } catch { /* try next */ }
+  }
+  return '';
+}
+
 if (!uri) {
   console.error('MONGO_DB_URI_ROLODEX not found (env var or repo .env).');
   process.exit(1);
@@ -135,10 +152,10 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
     const briefing = String(req.body?.briefing || '').slice(0, 4000);
     if (!briefing) return res.status(400).json({ error: 'No briefing' });
     if (engine === 'deepseek') {
-      if (!process.env.DEEPSEEK_API_KEY) return res.status(501).json({ error: 'DeepSeek key not configured on the Rolodex server' });
+      if (!envVar('DEEPSEEK_API_KEY')) return res.status(501).json({ error: 'DeepSeek key not configured on the Rolodex server' });
       const r = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.DEEPSEEK_API_KEY },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('DEEPSEEK_API_KEY') },
         body: JSON.stringify({
           model: 'deepseek-chat',
           messages: [
@@ -156,10 +173,10 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
       return res.json({ draft });
     }
     if (engine === 'grok') {
-      if (!process.env.GROK_API_KEY) return res.status(501).json({ error: 'Grok key not configured on the Rolodex server' });
+      if (!envVar('GROK_API_KEY')) return res.status(501).json({ error: 'Grok key not configured on the Rolodex server' });
       const r = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + process.env.GROK_API_KEY },
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('GROK_API_KEY') },
         body: JSON.stringify({
           model: 'grok-2-latest',
           messages: [

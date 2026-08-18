@@ -41,4 +41,9 @@ echo "Restarting rolodex-server via pm2..."
 pm2 restart rolodex-server --update-env 2>/dev/null || pm2 start src/index.js --name rolodex-server
 pm2 save
 
+# 2026-08-18 AI KEYS: the app never brings a key — Rolodex holds them here.
+if ! grep -qE "^DEEPSEEK_API_KEY=" .env 2>/dev/null; then
+  echo "NOTE: DEEPSEEK_API_KEY is not set in .env — the DeepSeek confidante will fall back to the on-device engine until you add it (one line, then pm2 restart rolodex-server --update-env)."
+fi
+
 echo "rolodex-server update complete!"
