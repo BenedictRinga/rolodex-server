@@ -105,37 +105,134 @@ app.get('/api/rolodex/health', (_req, res) => {
 // bundled version; a critical difference shows a polite notice in Settings.
 // 2026-08-16 BILLING: Stripe Checkout for the two tiers.
 // Basic () = contact manager + the Assistant (5 AI interventions/month);
-// Confidante () = the full AI agent all month. Without STRIPE_SECRET_KEY
-// the endpoint answers 501 so the app can show the connect-Stripe state.
+// 2026-08-18 MULTI-GATEWAY BILLING: Stripe (cards/global), Paystack (Nigeria),
+// Flutterwave (Kenya / M-Pesa), Paddle (global merchant-of-record). The app
+// sends { plan, gateway, email }; the server returns the hosted checkout URL.
+// Without a gateway key the endpoint answers 501 so the modal can show the
+// connect state honestly per gateway.
 app.post('/api/rolodex/billing/checkout', async (req, res) => {
   try {
     const plan = String(req.body?.plan || '');
+    const gateway = String(req.body?.gateway || 'stripe');
+    const email = String(req.body?.email || '').trim();
     const plans = {
-      basic: { name: 'Rolodex Basic', amount: 100, id: 'rolodex-basic' },
-      confidante: { name: 'RolodexAI Confidante', amount: 500, id: 'rolodex-confidante' },
+      basic: {
+        name: 'Rolodex Basic', id: 'rolodex-basic',
+        amount: 100, // USD cents (Stripe)
+        kobo: 100000, // NGN kobo (Paystack) = ₦1,000
+        kes: 100, // KES whole shillings (Flutterwave/M-Pesa)
+        paddlePriceId: envVar('PADDLE_BASIC_PRICE_ID'),
+      },
+      confidante: {
+        name: 'RolodexAI Confidante', id: 'rolodex-confidante',
+        amount: 500, // USD cents (Stripe)
+        kobo: 500000, // NGN kobo (Paystack) = ₦5,000
+        kes: 500, // KES whole shillings (Flutterwave/M-Pesa)
+        paddlePriceId: envVar('PADDLE_CONFIDANTE_PRICE_ID'),
+      },
     };
     const cfg = plans[plan];
     if (!cfg) return res.status(400).json({ error: 'Unknown plan' });
-    if (!process.env.STRIPE_SECRET_KEY) {
-      return res.status(501).json({ error: 'Stripe is not connected - add STRIPE_SECRET_KEY' });
-    }
-    const stripe = new (require('stripe'))(process.env.STRIPE_SECRET_KEY);
+
     const origin = req.headers.origin || 'https://zyppar.com';
-    const session = await stripe.checkout.sessions.create({
-      mode: 'subscription',
-      line_items: [{
-        price_data: {
-          currency: 'usd',
-          product_data: { name: cfg.name, metadata: { planId: cfg.id } },
-          unit_amount: cfg.amount,
-          recurring: { interval: 'month' },
-        },
-        quantity: 1,
-      }],
-      success_url: origin + '/rolodex/?checkout=success&plan=' + plan,
-      cancel_url: origin + '/rolodex/?checkout=cancelled',
-    });
-    res.json({ url: session.url });
+    const successUrl = origin + '/rolodex/?checkout=success&plan=' + plan + '&gateway=' + gateway;
+    const cancelUrl = origin + '/rolodex/?checkout=cancelled';
+
+    // ── Stripe ──────────────────────────────────────────────────────────────
+    if (gateway === 'stripe') {
+      if (!envVar('STRIPE_SECRET_KEY')) {
+        return res.status(501).json({ error: 'Stripe is not connected - add STRIPE_SECRET_KEY' });
+      }
+      const stripe = new (require('stripe'))(envVar('STRIPE_SECRET_KEY'));
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        line_items: [{
+          price_data: {
+            currency: 'usd',
+            product_data: { name: cfg.name, metadata: { planId: cfg.id } },
+            unit_amount: cfg.amount,
+            recurring: { interval: 'month' },
+          },
+          quantity: 1,
+        }],
+        success_url: successUrl,
+        cancel_url: cancelUrl,
+      });
+      return res.json({ url: session.url, gateway });
+    }
+
+    // ── Paystack (Nigeria) ──────────────────────────────────────────────────
+    if (gateway === 'paystack') {
+      if (!envVar('PAYSTACK_SECRET_KEY')) {
+        return res.status(501).json({ error: 'Paystack is not connected - add PAYSTACK_SECRET_KEY' });
+      }
+      const r = await fetch('https://api.paystack.co/transaction/initialize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('PAYSTACK_SECRET_KEY') },
+        body: JSON.stringify({
+          email: email || 'guest@rolodex.local',
+          amount: cfg.kobo,
+          currency: 'NGN',
+          metadata: { planId: cfg.id, plan, gateway: 'paystack' },
+          callback_url: successUrl,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data?.status) return res.status(502).json({ error: 'Paystack upstream: ' + (data?.message || r.status) });
+      return res.json({ url: data?.data?.authorization_url, gateway });
+    }
+
+    // ── Flutterwave (Kenya / M-Pesa + cards) ────────────────────────────────
+    if (gateway === 'flutterwave') {
+      if (!envVar('FLUTTERWAVE_SECRET_KEY')) {
+        return res.status(501).json({ error: 'Flutterwave is not connected - add FLUTTERWAVE_SECRET_KEY' });
+      }
+      const currency = String(req.body?.currency || 'KES').toUpperCase();
+      const r = await fetch('https://api.flutterwave.com/v3/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('FLUTTERWAVE_SECRET_KEY') },
+        body: JSON.stringify({
+          tx_ref: 'rolodex-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+          amount: currency === 'KES' ? cfg.kes : cfg.amount / 100,
+          currency,
+          redirect_url: successUrl,
+          customer: { email: email || 'guest@rolodex.local', name: String(req.body?.name || 'Rolodex user').slice(0, 80) },
+          customizations: { title: cfg.name, description: cfg.id },
+          payment_options: currency === 'KES' ? 'mpesa,card' : 'card',
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok || !data?.status) return res.status(502).json({ error: 'Flutterwave upstream: ' + (data?.message || r.status) });
+      return res.json({ url: data?.data?.link, gateway });
+    }
+
+    // ── Paddle (global merchant of record) ──────────────────────────────────
+    if (gateway === 'paddle') {
+      if (!envVar('PADDLE_API_KEY')) {
+        return res.status(501).json({ error: 'Paddle is not connected - add PADDLE_API_KEY' });
+      }
+      if (!cfg.paddlePriceId) {
+        return res.status(501).json({ error: 'Paddle price not configured - add PADDLE_BASIC_PRICE_ID / PADDLE_CONFIDANTE_PRICE_ID' });
+      }
+      const paddleBase = envVar('PADDLE_ENVIRONMENT') === 'sandbox' ? 'https://sandbox-api.paddle.com' : 'https://api.paddle.com';
+      const body = {
+        items: [{ price_id: cfg.paddlePriceId, quantity: 1 }],
+        custom_data: { planId: cfg.id, plan, gateway: 'paddle' },
+        success_url: successUrl,
+      };
+      if (email) body.customer = { email };
+      const r = await fetch(paddleBase + '/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('PADDLE_API_KEY') },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      const checkoutUrl = data?.data?.checkout?.url;
+      if (!r.ok || !checkoutUrl) return res.status(502).json({ error: 'Paddle upstream: ' + (data?.error?.code || r.status) });
+      return res.json({ url: checkoutUrl, gateway });
+    }
+
+    return res.status(400).json({ error: 'Unknown gateway: ' + gateway });
   } catch (e) {
     res.status(500).json({ error: 'Checkout failed: ' + (e?.message || 'unknown') });
   }
