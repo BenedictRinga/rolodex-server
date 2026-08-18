@@ -59,6 +59,24 @@ const DeviceState = conn.model('DeviceState', new mongoose.Schema({
   sample: { type: mongoose.Schema.Types.Mixed, default: null },
 }, { timestamps: true }));
 
+// 2026-08-18 THE USERS DB + THE INVESTOR GATE: these models were referenced by
+// the sync/lookup/investor routes but never defined - a fresh-clone ReferenceError.
+// The registry is phone-keyed so the chat's honest-send lookup can answer
+// "is this sendee already reachable in-app?" before a message goes out.
+const RolodexUser = conn.model('RolodexUser', new mongoose.Schema({
+  phone: { type: String, required: true, unique: true, index: true },
+  deviceId: { type: String, default: '' },
+  room: { type: String, default: '' },
+  name: { type: String, default: '' },
+  lastSeenAt: { type: Date, default: Date.now },
+}, { timestamps: true }));
+
+const InvestorRequest = conn.model('InvestorRequest', new mongoose.Schema({
+  name: { type: String, default: '' },
+  email: { type: String, required: true },
+  note: { type: String, default: '' },
+}, { timestamps: true }));
+
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
@@ -197,13 +215,24 @@ app.post('/api/rolodex/invites', (req, res) => {
   if (!from || !room) return res.status(400).json({ error: 'from + room required' });
   const token = inviteToken();
   invites.set(token, { from: String(from).slice(0, 60), room: String(room).slice(0, 60), kind: kind === 'appointment' ? 'appointment' : 'message', title: String(title).slice(0, 120), when: String(when).slice(0, 32), text: String(text).slice(0, 600), createdAt: Date.now() });
-  res.json({ ok: true, token, url: 'https://zyppar.com/rolodex/?invite=' + token });
+  res.json({ ok: true, token, url: 'https://zyppar.com/rolodex/?invite=' + token, ogUrl: 'https://zyppar.com/api/rolodex/invites/' + token + '/og' });
 });
 
 app.get('/api/rolodex/invites/:token', (req, res) => {
   const inv = invites.get(String(req.params.token || ''));
   if (!inv) return res.status(404).json({ error: 'Invite expired or not found' });
   res.json({ ok: true, invite: { ...inv, token: req.params.token } });
+});
+
+// 2026-08-18 THE OG-TAGGED LANDING - the SHAREAPP moment. This is the URL the
+// share text carries. WhatsApp / email / X fetch it and see the branded card in
+// the preview (logo + "You have a message on RolodexAI"); a human tap gets a
+// branded splash and is carried into the PWA invite landing automatically.
+app.get('/api/rolodex/invites/:token/og', (req, res) => {
+  const token = String(req.params.token || '');
+  const inv = invites.get(token);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(inviteOgPage(inv, token));
 });
 
 
@@ -347,6 +376,75 @@ th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #21262d}th{color:
 
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// The SHAREAPP landing: branded OG card for link crawlers + a tiny splash that
+// carries the human into the PWA invite. Absolute asset URLs (the page is served
+// from /api/rolodex/, not from the Angular app).
+function inviteOgPage(inv, token) {
+  const base = 'https://zyppar.com/rolodex';
+  const pwaUrl = inv ? `${base}/?invite=${encodeURIComponent(token)}` : `${base}/`;
+  const hasInvite = !!inv;
+  const kind = inv?.kind === 'appointment' ? 'appointment' : 'message';
+  const from = escapeHtml(inv?.from || 'A friend');
+  let whenLabel = '';
+  if (inv?.when) {
+    try { whenLabel = escapeHtml(new Date(inv.when).toLocaleString()); } catch { whenLabel = escapeHtml(inv.when); }
+  }
+  const ogTitle = hasInvite
+    ? (kind === 'appointment'
+        ? `${escapeHtml(inv.from)} invited you to ${escapeHtml(inv.title || 'an appointment')} on RolodexAI`
+        : `${escapeHtml(inv.from)} sent you a message on RolodexAI`)
+    : 'You have a message on RolodexAI';
+  const ogDesc = hasInvite
+    ? (kind === 'appointment'
+        ? `A RolodexAI appointment is waiting for you${inv.title ? `: ${escapeHtml(inv.title)}` : ''}${whenLabel ? ` — ${whenLabel}` : ''}.`
+        : `“${escapeHtml(inv.text || '')}” — your card is ready on RolodexAI.`)
+    : 'The contacts app that remembers why you know someone.';
+  const ogImage = 'https://zyppar.com/rolodex/assets/rolodex/icon-512.png';
+  const refresh = hasInvite ? `<meta http-equiv="refresh" content="0;url=${pwaUrl}">` : '';
+  const body = hasInvite
+    ? `<div class="kicker">${kind === 'appointment' ? 'Appointment from' : 'Message from'} ${from}</div>
+       <div class="title">${kind === 'appointment' ? escapeHtml(inv.title || 'An appointment') : 'Your card is ready'}</div>
+       <div class="dim">${kind === 'appointment' ? (whenLabel || '') : '“' + escapeHtml(inv.text || '') + '”'}</div>
+       <a class="btn" href="${pwaUrl}">Open in Rolodex</a>`
+    : `<div class="kicker">RolodexAI</div>
+       <div class="title">This invite has expired</div>
+       <div class="dim">Ask your friend to send it again — or grab the app and never forget to stay in touch… again.</div>
+       <a class="btn" href="https://play.google.com/store/apps/details?id=com.zyppar.rolodexai">Get RolodexAI</a>`;
+  return `<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+${refresh}
+<title>${ogTitle}</title>
+<meta property="og:site_name" content="RolodexAI">
+<meta property="og:title" content="${ogTitle}">
+<meta property="og:description" content="${ogDesc}">
+<meta property="og:image" content="${ogImage}">
+<meta property="og:url" content="${pwaUrl}">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="${ogTitle}">
+<meta name="twitter:description" content="${ogDesc}">
+<meta name="twitter:image" content="${ogImage}">
+<style>
+body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#12141c;color:#e6e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center}
+.shell{max-width:420px;padding:32px}
+.logo{width:88px;height:88px;border-radius:22px}
+.wordmark{width:200px;margin-top:16px}
+.kicker{color:#8b93b0;font-size:13px;margin-top:20px}
+.title{font-size:20px;font-weight:600;margin-top:8px}
+.dim{color:#8b93b0;font-size:14px;margin-top:8px;line-height:1.5}
+.btn{display:inline-block;margin-top:24px;background:#f5c542;color:#12141c;font-weight:600;text-decoration:none;padding:12px 22px;border-radius:14px}
+</style>
+</head><body>
+<div class="shell">
+  <img class="logo" src="${ogImage}" alt="RolodexAI">
+  <br><img class="wordmark" src="https://zyppar.com/rolodex/assets/rolodex/name-512.png" alt="RolodexAI">
+  ${body}
+  <div class="dim" style="margin-top:28px">You never forget to stay in touch… again</div>
+</div>
+</body></html>`;
 }
 
 conn.on('connected', () => console.log('[rolodex] connected to the fresh rolodex db'));
