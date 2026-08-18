@@ -380,10 +380,25 @@ app.post('/api/rolodex/investor-requests', async (req, res) => {
 });
 
 // The app talks to the DB here — the demo's "it communicates" moment.
+// 2026-08-18 AI STATUS: lets the app show a live green light + which engine
+// the server can actually deliver (DeepSeek/Grok keys configured or not).
+app.get('/api/rolodex/ai/status', (_req, res) => {
+  res.json({
+    ok: true,
+    onDevice: true, // the on-device engine always works, even offline
+    deepseekConfigured: !!envVar('DEEPSEEK_API_KEY'),
+    grokConfigured: !!envVar('GROK_API_KEY'),
+  });
+});
+
 app.post('/api/rolodex/sync', async (req, res) => {
   try {
     const { deviceId, contacts = [], followUps = [], deviceName = '', room = '', ownerPhone = '', ownerName = '' } = req.body || {};
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' });
+    // 2026-08-18 THE AGENT'S COURTESY: a brand-new device gets a welcome from
+    // RolodexAI on its very first connection - even free users (trial period).
+    const existing = await DeviceState.findOne({ deviceId }).lean();
+    const isNewDevice = !existing;
     // 2026-08-18 THE USERS DB: the sync registers the device's identity
     if (ownerPhone) {
       await RolodexUser.updateOne(
@@ -419,7 +434,15 @@ app.post('/api/rolodex/sync', async (req, res) => {
       },
       { upsert: true }
     );
-    res.json({ ok: true, deviceId, syncedAt: new Date().toISOString() });
+    res.json({
+      ok: true,
+      deviceId,
+      syncedAt: new Date().toISOString(),
+      // 2026-08-18 THE AGENT SPEAKS FIRST: only on a brand-new device.
+      ...(isNewDevice ? {
+        welcome: "Karibu sana! I'm RolodexAI, your Confidante. Your contacts stay yours — I'm here to remember the tiny loops and proffer the messages. Add the 4 W's (When / Where / Who / Why) on a card and I'll start drafting in your voice. You're on a 7-day Confidante trial."
+      } : {}),
+    });
   } catch (err) {
     console.error('[rolodex/sync]', err.message);
     res.status(500).json({ message: 'sync failed' });
