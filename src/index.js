@@ -310,6 +310,65 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
   }
 });
 
+// 2026-08-19 REAL CHAT WITH ROLODEXAI — a genuine conversation, not presets.
+// The user talks to the Confidante (DeepSeek/Grok through ROLODEX's keys) about
+// how to make RolodexAI better. Conversation history is passed through
+// transiently and never stored. If no engine is configured/reachable the reply
+// is an honest fallback (the frontend then offers the free DeepSeek/Grok chats).
+app.post('/api/rolodex/chat', async (req, res) => {
+  try {
+    const engine = String(req.body?.engine || 'deepseek');
+    const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
+    const messages = rawMessages
+      .slice(0, 30)
+      .map((m) => ({
+        role: ['system', 'user', 'assistant'].includes(m?.role) ? m.role : 'user',
+        content: String(m?.content || '').slice(0, 2000),
+      }))
+      .filter((m) => m.content);
+    if (!messages.length) return res.status(400).json({ error: 'messages required' });
+    const system = {
+      role: 'system',
+      content: "You are RolodexAI's Confidante. The user is answering: 'How can we make RolodexAI better for you?' Keep replies short (1-3 sentences), warm, human, and concrete. Ask one focused question at a time to understand the frustration and the direction they want. Never be sycophantic. When asked to summarize, output one concise line shaped as: Frustration: ... — Direction: ...",
+    };
+    const apiMessages = [system, ...messages];
+
+    const call = async (key, base, model) => {
+      const r = await fetch(base, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+        body: JSON.stringify({ model, messages: apiMessages, max_tokens: 320, temperature: 0.7 }),
+      });
+      if (!r.ok) throw new Error('upstream ' + r.status);
+      const data = await r.json();
+      return String(data?.choices?.[0]?.message?.content || '').trim();
+    };
+
+    let reply = '';
+    let usedEngine = '';
+    if (engine === 'grok' && envVar('GROK_API_KEY')) {
+      try { reply = await call(envVar('GROK_API_KEY'), 'https://api.x.ai/v1/chat/completions', 'grok-2-latest'); usedEngine = 'grok'; } catch { /* try next */ }
+    }
+    if (!reply && envVar('DEEPSEEK_API_KEY')) {
+      try { reply = await call(envVar('DEEPSEEK_API_KEY'), 'https://api.deepseek.com/chat/completions', 'deepseek-chat'); usedEngine = 'deepseek'; } catch { /* try next */ }
+    }
+    if (!reply && engine !== 'grok' && envVar('GROK_API_KEY')) {
+      try { reply = await call(envVar('GROK_API_KEY'), 'https://api.x.ai/v1/chat/completions', 'grok-2-latest'); usedEngine = 'grok'; } catch { /* fallback */ }
+    }
+
+    if (!reply) {
+      return res.json({
+        reply: "The live Confidante isn't reachable right now. You can still tell me the frustration and the direction and I'll log it — or open a free DeepSeek/Grok chat below and continue there.",
+        fallback: true,
+        engine: '',
+      });
+    }
+    res.json({ reply, fallback: false, engine: usedEngine });
+  } catch (e) {
+    res.status(500).json({ error: 'Chat failed: ' + (e?.message || 'unknown') });
+  }
+});
+
 app.get('/api/rolodex/version', (_req, res) => {
   res.json({
     version: require('../package.json').version || '0.0.0',
