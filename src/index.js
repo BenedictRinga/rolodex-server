@@ -301,7 +301,108 @@ app.get('/api/rolodex/version', (_req, res) => {
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
- * 2026-08-17 THE DROPBOX MOMENT — invites.
+ * 2026-08-19 THE CONFIDANTE AGENT — backend scaffold.
+ * The frontend talks to one agent surface; the agent decomposes into
+ * sub-agents (Context, Composer, Delivery, Loop, Network, Billing) backed by
+ * the context warehouse. This scaffold exposes status + a compose entry point
+ * so the composer can grow server-side without breaking the current flow.
+ * ──────────────────────────────────────────────────────────────────────────── */
+app.get('/api/rolodex/agent/status', (_req, res) => {
+  res.json({
+    agent: 'confidante',
+    version: '0.1-scaffold',
+    subAgents: ['context', 'composer', 'delivery', 'loop', 'network', 'billing'],
+    contextWarehouse: true,
+    engines: {
+      deepseek: !!envVar('DEEPSEEK_API_KEY'),
+      grok: !!envVar('GROK_API_KEY'),
+    },
+  });
+});
+
+app.post('/api/rolodex/agent/compose', async (req, res) => {
+  try {
+    const {
+      contact = {},
+      occasion = 'follow-up',
+      instruction = '',
+      currentDraft = '',
+      senderName = 'Me',
+    } = req.body || {};
+    const name = String(contact?.name?.display || contact?.name || 'this contact').slice(0, 60);
+    const contextBits = [
+      `Write to ${name}`,
+      contact?.organization?.company ? `Company: ${contact.organization.company}` : '',
+      contact?.organization?.jobTitle ? `Role: ${contact.organization.jobTitle}` : '',
+      contact?.rolodex?.topic ? `Topic: ${contact.rolodex.topic}` : '',
+      contact?.rolodex?.followUp ? `Follow-up: ${contact.rolodex.followUp}` : '',
+      instruction ? `User instruction: ${String(instruction).slice(0, 1200)}` : '',
+    ].filter(Boolean).join('. ');
+    const briefing = currentDraft
+      ? `Refine this draft for ${name}. ${contextBits}\nCurrent draft:\n${currentDraft}\nReturn only the improved message.`
+      : `The user is ${senderName}. ${contextBits}. Occasion: ${occasion}. Return a warm, human, one-paragraph message in the user's voice.`;
+    const engine = String(req.body?.engine || 'deepseek');
+    if (engine === 'grok' && envVar('GROK_API_KEY')) {
+      const r = await fetch('https://api.x.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('GROK_API_KEY') },
+        body: JSON.stringify({ model: 'grok-2-latest', messages: [{ role: 'system', content: 'You are RolodexAI, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        const draft = data?.choices?.[0]?.message?.content?.trim();
+        if (draft) return res.json({ draft, agent: 'confidante', subAgent: 'composer' });
+      }
+    }
+    if (engine === 'deepseek' && envVar('DEEPSEEK_API_KEY')) {
+      const r = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('DEEPSEEK_API_KEY') },
+        body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'system', content: 'You are RolodexAI, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
+      });
+      if (r.ok) {
+        const data = await r.json();
+        const draft = data?.choices?.[0]?.message?.content?.trim();
+        if (draft) return res.json({ draft, agent: 'confidante', subAgent: 'composer' });
+      }
+    }
+    // Fallback: echo the current draft or a simple on-device-style draft.
+    const fallback = currentDraft || `Hi ${name}, I was thinking of you — let's catch up soon.`;
+    return res.json({ draft: fallback, agent: 'confidante', subAgent: 'composer', fallback: true });
+  } catch (e) {
+    res.status(500).json({ error: 'Agent compose failed: ' + (e?.message || 'unknown') });
+  }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 2026-08-19 LINK PREVIEW — tiny OG scraper.
+ * Returns title/image/description/domain for a URL. No heavy dependency:
+ * a plain fetch + regex over the HTML head. Used by the chat/link-preview UI.
+ * ──────────────────────────────────────────────────────────────────────────── */
+app.get('/api/rolodex/link-preview', async (req, res) => {
+  try {
+    const url = String(req.query?.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RolodexAI/1.0)' } });
+    clearTimeout(timer);
+    const html = await r.text();
+    const grab = (re) => { const m = html.match(re); return m?.[1] ? String(m[1]).replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim().slice(0, 300) : ''; };
+    const title = grab(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i)
+      || grab(/<title[^>]*>([^<]+)<\/title>/i);
+    const image = grab(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+    const description = grab(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i)
+      || grab(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i);
+    const host = (() => { try { return new URL(url).hostname; } catch { return ''; } })();
+    res.json({ url, host, title, image, description });
+  } catch (e) {
+    res.status(502).json({ error: 'Link preview failed: ' + (e?.message || 'unknown') });
+  }
+});
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 2026-08-19 THE DROPBOX MOMENT — invites.
  * When the counterparty does NOT have Rolodex, the appointment/message is
  * delivered through the channels they already use (WhatsApp / email / SMS /
  * X / copy-link). The share URL carries a short token; clicking it opens the
@@ -649,6 +750,42 @@ io.on('connection', (socket) => {
       room, key: String(data?.key || ''), title: String(data?.title || '').slice(0, 80),
       when: String(data?.when || ''), from: socket.data.chatName || 'Someone',
     });
+  });
+
+  // 2026-08-19 WEBRTC SIGNALING: the server is a dumb relay - it never sees
+  // media, only offer/answer/ICE. Peers in the same room exchange signals.
+  socket.on('webrtc:signal', (data) => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    const payload = {
+      room,
+      type: String(data?.type || '').slice(0, 20),
+      sdp: data?.sdp ? String(data.sdp).slice(0, 20000) : '',
+      candidate: data?.candidate ? String(data.candidate).slice(0, 20000) : '',
+      name: socket.data.chatName || 'Someone',
+    };
+    socket.to('room:' + room).emit('webrtc:signal', payload);
+  });
+
+  socket.on('webrtc:leave', () => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    socket.to('room:' + room).emit('webrtc:leave', { name: socket.data.chatName || 'Someone' });
+  });
+
+  // 2026-08-19 VIDEO CLIP MESSAGING: short reminder/greeting clips ride the
+  // room as data URLs (small clips only; production can move to object storage).
+  socket.on('video-clip', (data) => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    const payload = {
+      room,
+      name: socket.data.chatName || 'Someone',
+      dataUrl: String(data?.dataUrl || '').slice(0, 4_000_000),
+      note: String(data?.note || '').slice(0, 300),
+      ts: Date.now(),
+    };
+    socket.to('room:' + room).emit('video-clip', payload);
   });
 
   socket.on('disconnect', () => {
