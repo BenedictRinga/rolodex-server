@@ -297,7 +297,11 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
 });
 
 app.get('/api/rolodex/version', (_req, res) => {
-  res.json({ version: require('../package.json').version || '0.0.0', at: new Date().toISOString() });
+  res.json({
+    version: require('../package.json').version || '0.0.0',
+    build: Number(require('../package.json').build) || 0,
+    at: new Date().toISOString(),
+  });
 });
 
 /* ────────────────────────────────────────────────────────────────────────────
