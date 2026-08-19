@@ -74,6 +74,11 @@ const DeviceState = conn.model('DeviceState', new mongoose.Schema({
   contactNames: { type: [String], default: [] },
   contacts: { type: [mongoose.Schema.Types.Mixed], default: [] }, // full contact list (rolodex-server storage)
   sample: { type: mongoose.Schema.Types.Mixed, default: null },
+  // 2026-08-19 THE 7-DAY TRIAL: tracked server-side from the device's first
+  // sync (first use). Reopenable on demand via /trial/reopen — never auto-renewed.
+  trialStartedAt: { type: Date, default: null },
+  trialEndsAt: { type: Date, default: null },
+  trialReopens: { type: Number, default: 0 },
 }, { timestamps: true }));
 
 // 2026-08-18 THE USERS DB + THE INVESTOR GATE: these models were referenced by
@@ -92,6 +97,15 @@ const InvestorRequest = conn.model('InvestorRequest', new mongoose.Schema({
   name: { type: String, default: '' },
   email: { type: String, required: true },
   note: { type: String, default: '' },
+}, { timestamps: true }));
+
+// 2026-08-19 CHAT WITH ROLODEXAI — user suggestions delivered to the investors'
+// extended room (the -x2 password space). The summary is the gleaned direction.
+const InvestorFeedback = conn.model('InvestorFeedback', new mongoose.Schema({
+  deviceId: { type: String, default: '' },
+  deviceName: { type: String, default: '' },
+  messages: { type: [String], default: [] },
+  summary: { type: String, required: true },
 }, { timestamps: true }));
 
 const app = express();
@@ -504,6 +518,14 @@ app.post('/api/rolodex/sync', async (req, res) => {
     // RolodexAI on its very first connection - even free users (trial period).
     const existing = await DeviceState.findOne({ deviceId }).lean();
     const isNewDevice = !existing;
+    // 2026-08-19 THE 7-DAY TRIAL: starts on first use (first sync) and is never
+    // auto-renewed. The server is the source of truth; the client's own trial
+    // values are only adopted when the server has none yet.
+    const clientTrialStart = Number(req.body?.trial?.startedAt) || 0;
+    const clientTrialEnd = Number(req.body?.trial?.endsAt) || 0;
+    const now = new Date();
+    const trialStartedAt = existing?.trialStartedAt || (clientTrialStart > 0 ? new Date(clientTrialStart) : now);
+    const trialEndsAt = existing?.trialEndsAt || (clientTrialEnd > Date.now() ? new Date(clientTrialEnd) : new Date(now.getTime() + 7 * 86400_000));
     // 2026-08-18 THE USERS DB: the sync registers the device's identity
     if (ownerPhone) {
       await RolodexUser.updateOne(
@@ -529,6 +551,8 @@ app.post('/api/rolodex/sync', async (req, res) => {
           // 2026-08-16: the FULL contact list is stored — "rolodex-server" is a
           // real storage location (the app restores from here), not a mirror.
           contacts: (contacts || []).slice(0, 500),
+          trialStartedAt,
+          trialEndsAt,
           sample: {
             first: contactDisplayName((contacts || [])[0]) || '(unnamed)',
             dueToday: (followUps || []).filter((f) => f && f.overdue === true).length,
@@ -541,6 +565,11 @@ app.post('/api/rolodex/sync', async (req, res) => {
       ok: true,
       deviceId,
       syncedAt: new Date().toISOString(),
+      trial: {
+        startedAt: trialStartedAt.toISOString(),
+        endsAt: trialEndsAt.toISOString(),
+        reopens: existing?.trialReopens || 0,
+      },
       // 2026-08-18 THE AGENT SPEAKS FIRST: only on a brand-new device.
       ...(isNewDevice ? {
         welcome: "Karibu sana! I'm RolodexAI, your Confidante. Your contacts stay yours — I'm here to remember the tiny loops and proffer the messages. Add the 4 W's (When / Where / Who / Why) on a card and I'll start drafting in your voice. You're on a 7-day Confidante trial."
@@ -564,6 +593,11 @@ app.get('/api/rolodex/state/:deviceId', async (req, res) => {
       contactsCount: d.contactsCount,
       followUpsCount: d.followUpsCount,
       contacts: d.contacts || [],
+      trial: {
+        startedAt: d.trialStartedAt || null,
+        endsAt: d.trialEndsAt || null,
+        reopens: d.trialReopens || 0,
+      },
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -649,6 +683,77 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
   } catch (err) {
     console.error('[rolodex/investor/summary]', err.message);
     res.status(500).json({ error: 'summary failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-19 THE TRIAL REOPEN — the owner/investor can re-open the 7-day trial
+// for a device when desirable. It never happens automatically.
+app.post('/api/rolodex/trial/reopen', async (req, res) => {
+  try {
+    const deviceId = String(req.body?.deviceId || '').trim();
+    if (!deviceId) return res.status(400).json({ error: 'deviceId required' });
+    const now = new Date();
+    const endsAt = new Date(now.getTime() + 7 * 86400_000);
+    const updated = await DeviceState.findOneAndUpdate(
+      { deviceId },
+      { $set: { trialStartedAt: now, trialEndsAt: endsAt }, $inc: { trialReopens: 1 } },
+      { upsert: true, new: true }
+    );
+    res.json({
+      ok: true,
+      trial: {
+        startedAt: updated.trialStartedAt,
+        endsAt: updated.trialEndsAt,
+        reopens: updated.trialReopens || 0,
+      },
+    });
+  } catch (err) {
+    console.error('[rolodex/trial/reopen]', err.message);
+    res.status(500).json({ error: 'trial reopen failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-19 CHAT WITH ROLODEXAI — user suggestions land here and are read in
+// the Investors portal's extended (-x2) room.
+app.post('/api/rolodex/feedback', async (req, res) => {
+  try {
+    const { deviceId = '', deviceName = '', messages = [], summary = '' } = req.body || {};
+    const cleanMessages = Array.isArray(messages)
+      ? messages.map((m) => String(typeof m === 'string' ? m : (m?.text || '')).trim().slice(0, 1000)).filter(Boolean).slice(0, 20)
+      : [];
+    const cleanSummary = String(summary || cleanMessages.join(' ')).trim().slice(0, 3000);
+    if (!cleanSummary) return res.status(400).json({ error: 'summary required' });
+    await InvestorFeedback.create({
+      deviceId: String(deviceId || '').slice(0, 80),
+      deviceName: String(deviceName || '').slice(0, 80),
+      messages: cleanMessages,
+      summary: cleanSummary,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[rolodex/feedback]', err.message);
+    res.status(500).json({ error: 'feedback failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+app.get('/api/rolodex/feedback', async (_req, res) => {
+  try {
+    const items = await InvestorFeedback.find({}).sort({ createdAt: -1 }).limit(100).lean();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      items: items.map((i) => ({
+        id: String(i._id),
+        deviceId: i.deviceId || '',
+        deviceName: i.deviceName || i.deviceId || '',
+        messages: i.messages || [],
+        summary: i.summary || '',
+        createdAt: i.createdAt,
+      })),
+    });
+  } catch (err) {
+    console.error('[rolodex/feedback]', err.message);
+    res.status(500).json({ error: 'feedback list failed: ' + (err?.message || 'unknown') });
   }
 });
 
