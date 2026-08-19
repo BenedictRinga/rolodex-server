@@ -513,7 +513,7 @@ app.post('/api/rolodex/sync', async (req, res) => {
       );
     }
     const names = (contacts || [])
-      .map((c) => (c && (c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`))) ? String(c.name || (c.firstName && `${c.firstName} ${c.lastName || ''}`)) : null)
+      .map(contactDisplayName)
       .filter(Boolean)
       .slice(0, 40);
     await DeviceState.updateOne(
@@ -530,9 +530,7 @@ app.post('/api/rolodex/sync', async (req, res) => {
           // real storage location (the app restores from here), not a mirror.
           contacts: (contacts || []).slice(0, 500),
           sample: {
-            first: (contacts || [])[0]
-              ? String((contacts[0] && (contacts[0].name?.display || contacts[0].name)) || (contacts[0].firstName && `${contacts[0].firstName} ${contacts[0].lastName || ''}`) || '(unnamed)')
-              : null,
+            first: contactDisplayName((contacts || [])[0]) || '(unnamed)',
             dueToday: (followUps || []).filter((f) => f && f.overdue === true).length,
           },
         },
@@ -578,41 +576,142 @@ app.get('/api/rolodex/live', async (_req, res) => {
     const devices = await DeviceState.find({}).sort({ lastSyncAt: -1 }).limit(50).lean();
     const total = await DeviceState.countDocuments();
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
     res.send(peekPage(devices, total));
   } catch (err) {
     res.status(500).send(`<h1>live unavailable</h1><p>${err.message}</p>`);
   }
 });
 
+// 2026-08-19 THE INVESTOR SUMMARY — the JSON the Investor page charts draw
+// from. Deliberately raw and captioned: counts are the numbers devices last
+// pushed, never deduplicated or projected.
+app.get('/api/rolodex/investor/summary', async (_req, res) => {
+  try {
+    const now = Date.now();
+    const hourAgo = new Date(now - 3600_000);
+    const dayAgo = new Date(now - 24 * 3600_000);
+    const [totalsAgg] = await DeviceState.aggregate([
+      {
+        $group: {
+          _id: null,
+          contacts: { $sum: '$contactsCount' },
+          followUps: { $sum: '$followUpsCount' },
+          activeLastHour: { $sum: { $cond: [{ $gte: ['$lastSyncAt', hourAgo] }, 1, 0] } },
+          activeLast24h: { $sum: { $cond: [{ $gte: ['$lastSyncAt', dayAgo] }, 1, 0] } },
+        },
+      },
+    ]);
+    const devices = await DeviceState.find({}).sort({ lastSyncAt: -1 }).limit(500).lean();
+    const roomMap = new Map();
+    for (const d of devices) {
+      const room = String(d.room || '').trim().toUpperCase() || '(no room)';
+      const entry = roomMap.get(room) || { room, deviceCount: 0, contacts: 0, followUps: 0, lastSyncAt: null };
+      entry.deviceCount += 1;
+      entry.contacts += d.contactsCount || 0;
+      entry.followUps += d.followUpsCount || 0;
+      if (!entry.lastSyncAt || d.lastSyncAt > entry.lastSyncAt) entry.lastSyncAt = d.lastSyncAt;
+      roomMap.set(room, entry);
+    }
+    const rooms = Array.from(roomMap.values())
+      .sort((a, b) => (b.contacts || 0) - (a.contacts || 0))
+      .slice(0, 10);
+    const timeline = [];
+    for (let i = 23; i >= 0; i--) {
+      const start = new Date(now - (i + 1) * 3600_000);
+      const end = new Date(now - i * 3600_000);
+      const count = devices.filter((d) => d.lastSyncAt && d.lastSyncAt >= start && d.lastSyncAt < end).length;
+      timeline.push({ bucketStart: start.toISOString(), count });
+    }
+    const topDevices = devices.slice(0, 10).map((d) => ({
+      deviceId: d.deviceId,
+      deviceName: d.deviceName || d.deviceId,
+      room: d.room || '',
+      lastSyncAt: d.lastSyncAt,
+      contactsCount: d.contactsCount || 0,
+      followUpsCount: d.followUpsCount || 0,
+      recentNames: (d.contactNames || []).slice(0, 4),
+    }));
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      generatedAt: new Date().toISOString(),
+      totals: {
+        devices: await DeviceState.countDocuments(),
+        contacts: totalsAgg?.contacts || 0,
+        followUps: totalsAgg?.followUps || 0,
+        activeLastHour: totalsAgg?.activeLastHour || 0,
+        activeLast24h: totalsAgg?.activeLast24h || 0,
+      },
+      rooms,
+      timeline,
+      topDevices,
+    });
+  } catch (err) {
+    console.error('[rolodex/investor/summary]', err.message);
+    res.status(500).json({ error: 'summary failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+function contactDisplayName(c) {
+  if (!c) return '';
+  const n = c.name;
+  if (typeof n === 'string') return String(n).trim();
+  if (n && typeof n === 'object') {
+    const direct = String(n.display || n.formatted || n.displayName || n.fullName || n.name || '').trim();
+    if (direct) return direct;
+    const joined = [n.prefix, n.given || n.givenName, n.middle || n.middleName, n.family || n.familyName, n.suffix]
+      .filter((v) => v !== undefined && v !== null && String(v).trim())
+      .join(' ')
+      .trim();
+    if (joined) return joined;
+  }
+  if (c.firstName) return String([c.firstName, c.lastName || ''].filter(Boolean).join(' ')).trim();
+  if (c.displayName) return String(c.displayName).trim();
+  if (c.nickname) return String(c.nickname).trim();
+  return '';
+}
+
 function peekPage(devices, total) {
   const rows = devices
     .map((d) => {
-      const t = d.lastSyncAt ? new Date(d.lastSyncAt).toLocaleTimeString() : '—';
+      const iso = d.lastSyncAt ? new Date(d.lastSyncAt).toISOString() : '';
+      const names = (d.contactNames || []).slice(0, 4).filter((n) => typeof n === 'string' && n !== '[object Object]').join(', ') || '—';
       return `<tr>
         <td><b>${escapeHtml(d.deviceName || d.deviceId)}</b><br/><span class="dim">${escapeHtml(String(d.deviceId).slice(0, 18))}</span></td>
-        <td>${escapeHtml(t)}</td>
+        <td class="sync-time" data-iso="${escapeHtml(iso)}">—</td>
+        <td>${escapeHtml(d.room || '—')}</td>
         <td>${d.contactsCount ?? 0}</td>
         <td>${d.followUpsCount ?? 0}</td>
-        <td class="dim">${escapeHtml((d.contactNames || []).slice(0, 4).join(', ') || '—')}</td>
+        <td class="dim">${escapeHtml(names)}</td>
       </tr>`;
     })
     .join('\n');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rolodex — Live</title><style>
+<title>Rolodex — Live dashboard</title><style>
 body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6e8f0;margin:0;padding:24px}
-h1{font-size:20px;margin:0 0 4px}h2{font-size:13px;color:#8b93b0;font-weight:400;margin:0 0 20px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:13px;color:#8b93b0;font-weight:400;margin:0 0 8px}
 .badge{display:inline-block;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;border-radius:20px;padding:3px 10px;font-size:12px;margin-left:8px}
+.tab-note{background:#1c2128;border:1px solid #30363d;border-radius:10px;padding:10px 12px;font-size:13px;color:#8b93b0;margin:0 0 18px}
+.tab-note b{color:#e6e8f0}
 table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px}
+caption{caption-side:top;text-align:left;font-size:12px;color:#8b93b0;padding:6px 2px 10px}
 th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #21262d}th{color:#8b93b0;font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
 .dim{color:#8b93b0;font-size:12px}.live{color:#3fb950;font-weight:600}
 .foot{color:#8b93b0;font-size:12px;margin-top:20px}
 </style></head><body>
 <h1>Rolodex <span class="badge live">● LIVE</span></h1>
 <h2>Every device that talks to the fresh <code>rolodex</code> database — auto-refreshing every 5s.</h2>
-<table><thead><tr><th>Device</th><th>Last sync</th><th>Contacts</th><th>Follow-ups</th><th>Recent names</th></tr></thead>
-<tbody>${rows || '<tr><td colspan="5" class="dim">Waiting for the first device to sync…</td></tr>'}</tbody></table>
+<div class="tab-note"><b>You are in the live dashboard (a new browser tab).</b> The Rolodex app is still open behind this tab — close this tab or switch back to continue there.</div>
+<table>
+<caption>Recent names = the first 4 contact display names that device last pushed. Contacts / Follow-ups = the raw counts in that push, not deduplicated people.</caption>
+<thead><tr><th>Device</th><th>Last sync</th><th>Room</th><th>Contacts</th><th>Follow-ups</th><th>Recent names</th></tr></thead>
+<tbody>${rows || '<tr><td colspan="6" class="dim">Waiting for the first device to sync…</td></tr>'}</tbody></table>
 <div class="foot">${total} device(s) synced · <span id="clock">—</span></div>
-<script>setInterval(()=>{fetch('/api/rolodex/live',{headers:{Accept:'text/html'}}).then(r=>r.text()).then(h=>{const m=h.match(/<tbody>([\\s\\S]*?)<\\/tbody>/);if(m)document.querySelector('tbody').innerHTML=m[1];document.getElementById('clock').textContent=new Date().toLocaleTimeString();}).catch(()=>{});},5000);</script>
+<script>
+function formatTimes(){document.querySelectorAll('.sync-time').forEach(function(el){var iso=el.getAttribute('data-iso');if(iso){try{el.textContent=new Date(iso).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}catch(e){el.textContent='—';}}});document.getElementById('clock').textContent=new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
+formatTimes();
+setInterval(function(){fetch('/api/rolodex/live',{headers:{Accept:'text/html'},cache:'no-store'}).then(function(r){return r.text();}).then(function(h){var m=h.match(/<tbody>([\\s\\S]*?)<\\/tbody>/);if(m)document.querySelector('tbody').innerHTML=m[1];formatTimes();}).catch(function(){});},5000);
+</script>
 </body></html>`;
 }
 
