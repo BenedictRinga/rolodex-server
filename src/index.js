@@ -133,6 +133,28 @@ app.get('/api/rolodex/health', (_req, res) => {
   res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', at: new Date().toISOString() });
 });
 
+// 2026-08-20 STUDIO TTS: optional Qwen proxy for StudioPlayback / StudioBridge.
+// Device-first on the client; this only fires when QWEN_TTS_ENDPOINT is set.
+const studioTts = require('./services/studio-tts.service.js');
+app.post('/api/rolodex/tts', async (req, res) => {
+  try {
+    const text = String(req.body?.text || '').slice(0, 4000);
+    if (!text.trim()) return res.status(400).json({ error: 'text required' });
+    if (!studioTts.configured()) {
+      return res.status(501).json({ error: 'TTS not connected — add QWEN_TTS_ENDPOINT' });
+    }
+    const audio = await studioTts.synthesize(text, {
+      voice: String(req.body?.voice || 'qwen-default').slice(0, 40),
+      speed: Number(req.body?.speed) || 1,
+    });
+    if (!audio) return res.status(501).json({ error: 'TTS empty' });
+    res.set('Content-Type', 'audio/mpeg');
+    res.send(audio);
+  } catch (e) {
+    res.status(502).json({ error: 'TTS failed: ' + (e?.message || 'unknown') });
+  }
+});
+
 // 2026-08-16: the update check — the app polls this and compares against its
 // bundled version; a critical difference shows a polite notice in Settings.
 // 2026-08-16 BILLING: Stripe Checkout for the two tiers.
@@ -585,6 +607,7 @@ app.get('/api/rolodex/ai/status', (_req, res) => {
     onDevice: true, // the on-device engine always works, even offline
     deepseekConfigured: !!envVar('DEEPSEEK_API_KEY'),
     grokConfigured: !!envVar('GROK_API_KEY'),
+    ttsConfigured: studioTts.configured(),
   });
 });
 
