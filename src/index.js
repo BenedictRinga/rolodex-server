@@ -112,9 +112,22 @@ const InvestorFeedback = conn.model('InvestorFeedback', new mongoose.Schema({
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
-// 2026-08-20 ZYPPAR-STYLE UPDATES: /api/updates/check reads version.txt.
+// 2026-08-20 CORS: the PWA lives on zyppar.com/rolodex but the API may be
+// called from localhost dev or a different origin — update checks (and every
+// other route) must answer preflight, or fetch dies with ERR_FAILED and the
+// app wrongly reports "up to date".
+app.use((req, res, next) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// 2026-08-20 ZYPPAR-STYLE UPDATES: /api/rolodex/updates/check reads version.txt
+// (the app's apiBase already includes /api/rolodex).
 const updateRoutes = require('./routes/updates.routes.js');
-app.use('/api/updates', updateRoutes);
+app.use('/api/rolodex/updates', updateRoutes);
 
 app.get('/api/rolodex/health', (_req, res) => {
   res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', at: new Date().toISOString() });
