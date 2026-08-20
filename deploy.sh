@@ -38,13 +38,14 @@ LAST_VERSION=$(cat "$STATE_FILE" 2>/dev/null || echo "$REPO_VERSION")
 BASE_VERSION=$(node -e "
   const a = process.argv[1].split('.').map(Number);
   const b = process.argv[2].split('.').map(Number);
+  let base = a;
   for (let i = 0; i < 3; i++) {
     if ((a[i] || 0) !== (b[i] || 0)) {
-      console.log((a[i] || 0) > (b[i] || 0) ? a.join('.') : b.join('.'));
-      return;
+      base = (a[i] || 0) > (b[i] || 0) ? a : b;
+      break;
     }
   }
-  console.log(a.join('.'));
+  console.log(base.join('.'));
 " "$REPO_VERSION" "$LAST_VERSION")
 NEW_VERSION=$(node -e "
   const p = process.argv[1].split('.').map(Number);
