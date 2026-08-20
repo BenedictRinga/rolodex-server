@@ -20,37 +20,10 @@ else
 fi
 echo "Using branch: $BRANCH"
 git reset --hard "origin/$BRANCH"
-# 2026-08-20 FIX: the server repo may still be on an old local branch (master)
-# while origin uses main. Re-point the LOCAL branch to the origin branch, so
-# the version-bump commit lands on $BRANCH and `git push origin $BRANCH`
-# actually has a matching ref (previously: 'src refspec main does not match any').
-git checkout -B "$BRANCH" "origin/$BRANCH"
 git pull origin "$BRANCH"
 
 echo "Installing dependencies (yarn only)..."
 yarn
-
-# 2026-08-20 AUTOMATIC VERSION BUMP: every deploy.sh run advances version.txt
-# (and package.json) by one patch, commits it, and pushes it back to origin.
-# This is what makes the app's Update check see a NEW version after a deploy —
-# no more manual `nano version.txt`.
-NEW_VERSION=$(node -e "
-  const fs = require('fs');
-  const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-  const parts = String(p.version || '0.0.0').split('.').map(Number);
-  parts[2] = (parts[2] || 0) + 1;
-  const nv = parts.join('.');
-  p.version = nv;
-  fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
-  fs.writeFileSync('version.txt', nv);
-  console.log(nv);
-")
-echo "Bumping rolodex-server version to $NEW_VERSION"
-git add package.json version.txt
-git -c user.name="rolodex-deploy" -c user.email="deploy@rolodex.local" commit -m "chore: bump rolodex-server version to $NEW_VERSION" || true
-# 2026-08-20 Use the exact proven server command: git push origin main:main.
-# The :main part is required when the local branch name differs from origin.
-git push origin "$BRANCH:$BRANCH" || echo "WARNING: version bump committed locally but push failed — run 'git push origin $BRANCH:$BRANCH' manually."
 
 # Ensure .env exists with a Mongo URI: prefer MONGO_DB_URI_ROLODEX (a future
 # dedicated account), else reuse the paid URI (fresh rolodex db on the cluster).
