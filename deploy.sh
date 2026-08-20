@@ -48,7 +48,9 @@ NEW_VERSION=$(node -e "
 echo "Bumping rolodex-server version to $NEW_VERSION"
 git add package.json version.txt
 git -c user.name="rolodex-deploy" -c user.email="deploy@rolodex.local" commit -m "chore: bump rolodex-server version to $NEW_VERSION" || true
-git push origin "$BRANCH" || echo "WARNING: version bump committed locally but push failed — run 'git push origin $BRANCH' manually."
+# 2026-08-20 Use the exact proven server command: git push origin main:main.
+# The :main part is required when the local branch name differs from origin.
+git push origin "$BRANCH:$BRANCH" || echo "WARNING: version bump committed locally but push failed — run 'git push origin $BRANCH:$BRANCH' manually."
 
 # Ensure .env exists with a Mongo URI: prefer MONGO_DB_URI_ROLODEX (a future
 # dedicated account), else reuse the paid URI (fresh rolodex db on the cluster).
