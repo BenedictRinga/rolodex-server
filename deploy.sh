@@ -20,6 +20,11 @@ else
 fi
 echo "Using branch: $BRANCH"
 git reset --hard "origin/$BRANCH"
+# 2026-08-20 FIX: the server repo may still be on an old local branch (master)
+# while origin uses main. Re-point the LOCAL branch to the origin branch, so
+# the version-bump commit lands on $BRANCH and `git push origin $BRANCH`
+# actually has a matching ref (previously: 'src refspec main does not match any').
+git checkout -B "$BRANCH" "origin/$BRANCH"
 git pull origin "$BRANCH"
 
 echo "Installing dependencies (yarn only)..."
