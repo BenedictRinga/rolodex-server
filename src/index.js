@@ -135,24 +135,64 @@ app.get('/api/rolodex/health', (_req, res) => {
 
 // 2026-08-20 STUDIO TTS: optional Qwen proxy for StudioPlayback / StudioBridge.
 // Device-first on the client; this only fires when QWEN_TTS_ENDPOINT is set.
+// 2026-08-21 complements the Zyppar /library/tts/* surface: synthesize,
+// stream, voices, health — all under /api/rolodex/tts*.
 const studioTts = require('./services/studio-tts.service.js');
+
+function ttsPayload(req) {
+  return {
+    text: String(req.body?.text || '').slice(0, 4000),
+    voice: String(req.body?.voice || 'qwen-default').slice(0, 40),
+    speed: Number(req.body?.speed) || 1,
+  };
+}
+
 app.post('/api/rolodex/tts', async (req, res) => {
   try {
-    const text = String(req.body?.text || '').slice(0, 4000);
+    const { text, voice, speed } = ttsPayload(req);
     if (!text.trim()) return res.status(400).json({ error: 'text required' });
     if (!studioTts.configured()) {
       return res.status(501).json({ error: 'TTS not connected — add QWEN_TTS_ENDPOINT' });
     }
-    const audio = await studioTts.synthesize(text, {
-      voice: String(req.body?.voice || 'qwen-default').slice(0, 40),
-      speed: Number(req.body?.speed) || 1,
-    });
+    const audio = await studioTts.synthesize(text, { voice, speed });
     if (!audio) return res.status(501).json({ error: 'TTS empty' });
     res.set('Content-Type', 'audio/mpeg');
+    res.set('X-TTS-Provider', 'qwen');
+    res.set('X-TTS-Latency-Ms', String(Date.now()));
     res.send(audio);
   } catch (e) {
     res.status(502).json({ error: 'TTS failed: ' + (e?.message || 'unknown') });
   }
+});
+
+// Streaming-shaped TTS (full MP3 body + Zyppar headers) — the frontend
+// StudioQwenTtsService.synthesizeStreaming() calls this endpoint.
+app.post('/api/rolodex/tts/stream', async (req, res) => {
+  try {
+    const { text, voice, speed } = ttsPayload(req);
+    if (!text.trim()) return res.status(400).json({ error: 'text required' });
+    if (!studioTts.configured()) {
+      return res.status(501).json({ error: 'TTS not connected — add QWEN_TTS_ENDPOINT' });
+    }
+    const audio = await studioTts.synthesize(text, { voice, speed });
+    if (!audio) return res.status(501).json({ error: 'TTS empty' });
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('X-TTS-Provider', 'qwen');
+    res.set('X-TTS-Streaming', 'full');
+    res.set('X-TTS-Latency-Ms', String(Date.now()));
+    res.send(audio);
+  } catch (e) {
+    res.status(502).json({ error: 'TTS stream failed: ' + (e?.message || 'unknown') });
+  }
+});
+
+app.get('/api/rolodex/tts/voices', (_req, res) => {
+  res.json({ providers: [{ provider: 'qwen', voices: studioTts.listVoices() }] });
+});
+
+app.get('/api/rolodex/tts/health', async (_req, res) => {
+  const health = await studioTts.health();
+  res.json({ health, timestamp: new Date().toISOString() });
 });
 
 // 2026-08-16: the update check — the app polls this and compares against its
