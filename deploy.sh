@@ -10,6 +10,35 @@ set -e
 DEPLOY_DIR="/opt/rolodex-server"
 cd "$DEPLOY_DIR" || exit 1
 
+# Function to manage version — same pattern as /opt/zyppar-server/update.sh
+manage_version() {
+    local version_file="version.txt"
+    local default_version="1.0.0" # Fallback version if file is missing
+    local new_version="$1" # Optional: Specific version to set (e.g., 1.0.0)
+
+    # Read current version
+    if [ -f "$version_file" ]; then
+        current_version=$(cat "$version_file" | tr -d '[:space:]')
+    else
+        current_version="$default_version"
+        echo "Warning: $version_file not found, using default version $default_version"
+    fi
+
+    # If a specific version is provided, use it
+    if [ -n "$new_version" ]; then
+        echo "$new_version" > "$version_file"
+        echo "Set version.txt to $new_version"
+        return
+    fi
+
+    # Otherwise, increment patch version
+    IFS='.' read -r major minor patch <<< "$current_version"
+    patch=$((patch + 1))
+    new_version="${major}.${minor}.${patch}"
+    echo "$new_version" > "$version_file"
+    echo "Incremented version.txt to $new_version"
+}
+
 echo "Resetting local changes and pulling updates from origin main..."
 git fetch origin
 # Prefer main; fall back to master for repos pushed before the rename.
@@ -24,6 +53,9 @@ git pull origin "$BRANCH"
 
 echo "Installing dependencies (yarn only)..."
 yarn
+
+# Manage version (pass first argument if provided, e.g. ./deploy.sh 0.4.0)
+manage_version "$1"
 
 # Ensure .env exists with a Mongo URI: prefer MONGO_DB_URI_ROLODEX (a future
 # dedicated account), else reuse the paid URI (fresh rolodex db on the cluster).
