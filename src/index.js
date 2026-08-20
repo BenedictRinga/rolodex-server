@@ -112,6 +112,10 @@ const InvestorFeedback = conn.model('InvestorFeedback', new mongoose.Schema({
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
+// 2026-08-20 ZYPPAR-STYLE UPDATES: /api/updates/check reads version.txt.
+const updateRoutes = require('./routes/updates.routes.js');
+app.use('/api/updates', updateRoutes);
+
 app.get('/api/rolodex/health', (_req, res) => {
   res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', at: new Date().toISOString() });
 });
