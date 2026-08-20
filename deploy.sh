@@ -25,6 +25,26 @@ git pull origin "$BRANCH"
 echo "Installing dependencies (yarn only)..."
 yarn
 
+# 2026-08-20 AUTOMATIC VERSION BUMP: every deploy.sh run advances version.txt
+# (and package.json) by one patch, commits it, and pushes it back to origin.
+# This is what makes the app's Update check see a NEW version after a deploy —
+# no more manual `nano version.txt`.
+NEW_VERSION=$(node -e "
+  const fs = require('fs');
+  const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  const parts = String(p.version || '0.0.0').split('.').map(Number);
+  parts[2] = (parts[2] || 0) + 1;
+  const nv = parts.join('.');
+  p.version = nv;
+  fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+  fs.writeFileSync('version.txt', nv);
+  console.log(nv);
+")
+echo "Bumping rolodex-server version to $NEW_VERSION"
+git add package.json version.txt
+git -c user.name="rolodex-deploy" -c user.email="deploy@rolodex.local" commit -m "chore: bump rolodex-server version to $NEW_VERSION" || true
+git push origin "$BRANCH" || echo "WARNING: version bump committed locally but push failed — run 'git push origin $BRANCH' manually."
+
 # Ensure .env exists with a Mongo URI: prefer MONGO_DB_URI_ROLODEX (a future
 # dedicated account), else reuse the paid URI (fresh rolodex db on the cluster).
 if ! grep -qE "^(MONGO_DB_URI_ROLODEX|MONGO_DB_URI_PAID)=" .env 2>/dev/null; then
