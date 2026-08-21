@@ -140,8 +140,19 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2026-08-20 ZYPPAR-STYLE UPDATES: /api/rolodex/updates/check reads version.txt
-// (the app's apiBase already includes /api/rolodex).
+// 2026-08-21 OPENLOOP REBRAND: the frontend now calls /api/openloop/… — keep
+// /api/rolodex/… as a backward-compatible alias by rewriting the path here so
+// every existing route works unchanged under both prefixes.
+app.use((req, _res, next) => {
+  if (req.url.startsWith('/api/openloop')) {
+    req.url = '/api/rolodex' + req.url.slice('/api/openloop'.length);
+    req.originalUrl = req.url;
+  }
+  next();
+});
+
+// 2026-08-20 ZYPPAR-STYLE UPDATES: /api/openloop/updates/check reads version.txt
+// (the app's apiBase already includes /api/openloop).
 const updateRoutes = require('./routes/updates.routes.js');
 app.use('/api/rolodex/updates', updateRoutes);
 
@@ -246,8 +257,8 @@ app.post('/api/rolodex/billing/checkout', async (req, res) => {
     if (!cfg) return res.status(400).json({ error: 'Unknown plan' });
 
     const origin = req.headers.origin || 'https://zyppar.com';
-    const successUrl = origin + '/rolodex/?checkout=success&plan=' + plan + '&gateway=' + gateway;
-    const cancelUrl = origin + '/rolodex/?checkout=cancelled';
+    const successUrl = origin + '/openloop/?checkout=success&plan=' + plan + '&gateway=' + gateway;
+    const cancelUrl = origin + '/openloop/?checkout=cancelled';
 
     // ── Stripe ──────────────────────────────────────────────────────────────
     if (gateway === 'stripe') {
