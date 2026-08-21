@@ -78,4 +78,12 @@ if ! grep -qE "^DEEPSEEK_API_KEY=" .env 2>/dev/null; then
   echo "NOTE: DEEPSEEK_API_KEY is not set in .env — the DeepSeek confidante will fall back to the on-device engine until you add it (one line, then pm2 restart rolodex-server --update-env)."
 fi
 
+# 2026-08-21 ROLODEX-OWN TTS: no zyppar-server dependency. If QWEN_TTS_ENDPOINT
+# is unset, rolodex-server uses http://localhost:8080/v1/audio/speech (the local
+# Qwen engine on the droplet, same host). Set it in THIS repo's .env to point
+# elsewhere.
+if ! grep -qE "^QWEN_TTS_ENDPOINT=" .env 2>/dev/null; then
+  echo "NOTE: QWEN_TTS_ENDPOINT is not set in .env — rolodex-server will use default http://localhost:8080/v1/audio/speech. If no local Qwen engine is running, /tts returns 502 and the app falls back to device speech."
+fi
+
 echo "rolodex-server update complete!"

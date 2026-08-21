@@ -1,38 +1,36 @@
 'use strict';
 
 /**
- * Optional Qwen TTS proxy for Rolodex Studio playback.
- * Same endpoint shape as Zyppar's Qwen client (QWEN_TTS_ENDPOINT).
- * Never writes to Mongo. If the endpoint is unset, synthesize() returns null
- * so the app falls back to device TTS.
+ * Rolodex-server OWN TTS proxy — no dependency on the zyppar-server env or
+ * process. Config lives in rolodex-server's own .env:
+ *   QWEN_TTS_ENDPOINT  (default http://localhost:8080/v1/audio/speech)
+ *   QWEN_TTS_API_KEY   (optional)
+ *   QWEN_TTS_MODEL     (default qwen3-tts-flash)
  *
- * 2026-08-21: env lookup also reads the Zyppar server envs (local + droplet)
- * so rolodex reuses the SAME Qwen TTS engine as /opt/zyppar-server — one TTS
- * engine, two Express apps. Added listVoices()/health() to match the Zyppar
- * /library/tts/* surface (synthesize, stream, voices, health).
+ * Never writes to Mongo. If the endpoint is unreachable, synthesize() throws
+ * and the frontend falls back to device TTS.
  */
+
+const DEFAULT_QWEN_ENDPOINT = 'http://localhost:8080/v1/audio/speech';
 
 function envVar(name) {
   if (process.env[name]) return process.env[name];
   const fs = require('fs');
-  const candidates = [
-    'D:/TODOs/db-tools-tmp/zyppar.env',
-    'D:/MacBook/noGoogle/zypparserver/.env',
-    '/opt/zyppar-server/.env',
-    '.env',
-  ];
-  for (const p of candidates) {
-    try {
-      const t = fs.readFileSync(p, 'utf8');
-      const m = t.match(new RegExp('^' + name + '=[\"\']?([^\r\n\"\']+)', 'm'));
-      if (m) return m[1];
-    } catch { /* try next */ }
-  }
+  try {
+    const t = fs.readFileSync('.env', 'utf8');
+    const m = t.match(new RegExp('^' + name + '=[\"\']?([^\r\n\"\']+)', 'm'));
+    if (m) return m[1];
+  } catch { /* no .env */ }
   return '';
 }
 
+function qwenEndpoint() {
+  return envVar('QWEN_TTS_ENDPOINT') || DEFAULT_QWEN_ENDPOINT;
+}
+
+/** Rolodex owns a TTS endpoint (own env or the local default) — always configured. */
 function configured() {
-  return !!envVar('QWEN_TTS_ENDPOINT');
+  return !!qwenEndpoint();
 }
 
 /** Minimal Qwen personality catalog — mirrors the frontend StudioQwenTtsService. */
@@ -61,25 +59,32 @@ function listVoices() {
   ];
 }
 
-/** Health: configured + a fast reachability probe of the Qwen endpoint. */
+/** Health: endpoint + a fast reachability probe of the Qwen engine. */
 async function health() {
-  const endpoint = envVar('QWEN_TTS_ENDPOINT');
-  if (!endpoint) {
-    return { qwen: false, google: false, configured: false, detail: 'QWEN_TTS_ENDPOINT not set' };
-  }
+  const endpoint = qwenEndpoint();
+  const healthEndpoint = endpoint.replace('/v1/audio/speech', '/health');
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 5000);
-    const r = await fetch(endpoint, { method: 'GET', signal: ctrl.signal });
+    const r = await fetch(healthEndpoint, { method: 'GET', signal: ctrl.signal });
     clearTimeout(timer);
-    return { qwen: r.ok, google: false, configured: true, detail: 'HTTP ' + r.status };
-  } catch (e) {
-    return { qwen: false, google: false, configured: true, detail: (e?.message || 'unreachable') };
+    return { qwen: r.ok, google: false, configured: true, endpoint, detail: 'HTTP ' + r.status };
+  } catch {
+    // Fallback: some Qwen deployments don't expose /health — try the main endpoint.
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
+      const r = await fetch(endpoint, { method: 'GET', signal: ctrl.signal });
+      clearTimeout(timer);
+      return { qwen: r.ok, google: false, configured: true, endpoint, detail: 'HTTP ' + r.status };
+    } catch (e) {
+      return { qwen: false, google: false, configured: true, endpoint, detail: (e?.message || 'unreachable') };
+    }
   }
 }
 
 async function synthesize(text, options = {}) {
-  const endpoint = envVar('QWEN_TTS_ENDPOINT');
+  const endpoint = qwenEndpoint();
   if (!endpoint || !String(text || '').trim()) return null;
   const safeText = String(text)
     .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ' ')
@@ -107,4 +112,4 @@ async function synthesize(text, options = {}) {
   return Buffer.from(await r.arrayBuffer());
 }
 
-module.exports = { configured, synthesize, listVoices, health };
+module.exports = { configured, synthesize, listVoices, health, qwenEndpoint };

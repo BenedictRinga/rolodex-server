@@ -133,8 +133,9 @@ app.get('/api/rolodex/health', (_req, res) => {
   res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', at: new Date().toISOString() });
 });
 
-// 2026-08-20 STUDIO TTS: optional Qwen proxy for StudioPlayback / StudioBridge.
-// Device-first on the client; this only fires when QWEN_TTS_ENDPOINT is set.
+// 2026-08-20 STUDIO TTS: rolodex-server's OWN Qwen proxy for StudioPlayback /
+// StudioBridge. Config is rolodex's own .env (QWEN_TTS_ENDPOINT etc.) with a
+// localhost:8080 default — NO reading of the zyppar-server env.
 // 2026-08-21 complements the Zyppar /library/tts/* surface: synthesize,
 // stream, voices, health — all under /api/rolodex/tts*.
 const studioTts = require('./services/studio-tts.service.js');
