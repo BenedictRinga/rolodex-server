@@ -1,20 +1,23 @@
 'use strict';
 
 /**
- * Rolodex-server OWN TTS proxy — no dependency on the zyppar-server env or
- * process. Config lives in rolodex-server's own .env:
- *   QWEN_TTS_ENDPOINT        (default http://localhost:8080/v1/audio/speech)
- *   QWEN_TTS_API_KEY         (optional)
- *   QWEN_TTS_MODEL           (default qwen3-tts-flash)
- *   ROLODEX_TTS_GOOGLE_FALLBACK  (default 1 — free no-key Google Translate TTS
- *                                 fallback so MP3 still works when no Qwen engine
- *                                 is running; set 0 to disable)
+ * Rolodex-server TTS proxy — LOCKED to the same Piper TTS engine Zyppar uses.
+ * Zyppar's "Qwen" is actually a local Piper API server (scripts/qwen-tts-server.txt)
+ * running at 127.0.0.1:8080 (/opt/qwen-tts on the droplet), exposing:
+ *   POST /v1/audio/speech  → audio/mpeg
+ *   GET  /health
+ * Config lives in rolodex-server's own .env:
+ *   QWEN_TTS_ENDPOINT        (default http://127.0.0.1:8080/v1/audio/speech)
+ *   QWEN_TTS_API_KEY         (optional, Piper needs none)
+ *   QWEN_TTS_MODEL           (default qwen3-tts-flash; Piper ignores it)
+ *   ROLODEX_TTS_GOOGLE_FALLBACK  (default 1 — only used if Piper is down; set 0
+ *                                 to lock strictly to Piper)
  *
- * Never writes to Mongo. synthesize() tries Qwen first, then the no-key Google
+ * Never writes to Mongo. synthesize() tries Piper first, then the no-key Google
  * Translate fallback, then throws so the frontend can fall back to device TTS.
  */
 
-const DEFAULT_QWEN_ENDPOINT = 'http://localhost:8080/v1/audio/speech';
+const DEFAULT_QWEN_ENDPOINT = 'http://127.0.0.1:8080/v1/audio/speech';
 const GOOGLE_TRANSLATE_TTS_BASE = 'https://translate.google.com/translate_tts';
 
 function envVar(name) {
@@ -43,29 +46,32 @@ function googleFallbackEnabled() {
   return !(v === '0' || v === 'false' || v === 'no');
 }
 
-/** Minimal Qwen personality catalog — mirrors the frontend StudioQwenTtsService. */
+/** Qwen→Piper personality catalog — mirrors the Piper server's QWEN_MAP
+ *  (scripts/qwen-tts-server.txt) so Rolodex uses the same voice names. */
 function listVoices() {
   return [
-    {
-      id: 'qwen-echo', name: 'Confidante', language: 'en', gender: 'female',
-      description: 'The Confidante default — warm, clear, personal.', archetype: 'Universal',
-      defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.15, default: 1.0 },
-    },
-    {
-      id: 'qwen-atlas', name: 'Atlas', language: 'en', gender: 'male',
-      description: 'Warm authority — for business and news.', archetype: 'Anchor',
-      defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.2, default: 1.0 },
-    },
-    {
-      id: 'qwen-luna', name: 'Luna', language: 'en', gender: 'female',
-      description: 'Gentle, reassuring — for wellness and personal notes.', archetype: 'Companion',
-      defaultEmotion: 'calm', speedHint: { min: 0.75, max: 1.0, default: 0.85 },
-    },
-    {
-      id: 'qwen-orion', name: 'Orion', language: 'en', gender: 'male',
-      description: 'Energetic and inspiring.', archetype: 'Guide',
-      defaultEmotion: 'happy', speedHint: { min: 1.0, max: 1.4, default: 1.15 },
-    },
+    { id: 'qwen-morgan', name: 'Morgan', language: 'en', gender: 'male', description: 'Deep storyteller — documentary and epic narration.', archetype: 'Storyteller', defaultEmotion: 'calm', speedHint: { min: 0.8, max: 1.1, default: 0.9 } },
+    { id: 'qwen-atlas', name: 'Atlas', language: 'en', gender: 'male', description: 'Warm anchor — news and business.', archetype: 'Anchor', defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.2, default: 1.0 } },
+    { id: 'qwen-orion', name: 'Orion', language: 'en', gender: 'male', description: 'Energetic guide — motivation and tutorials.', archetype: 'Guide', defaultEmotion: 'happy', speedHint: { min: 1.0, max: 1.4, default: 1.15 } },
+    { id: 'qwen-onyx', name: 'Onyx', language: 'en', gender: 'male', description: 'Noir detective — thrillers and intimate podcasts.', archetype: 'Noir', defaultEmotion: 'calm', speedHint: { min: 0.7, max: 1.0, default: 0.85 } },
+    { id: 'qwen-luna', name: 'Luna', language: 'en', gender: 'female', description: 'Gentle companion — wellness and bedtime.', archetype: 'Companion', defaultEmotion: 'calm', speedHint: { min: 0.75, max: 1.0, default: 0.85 } },
+    { id: 'qwen-aria', name: 'Aria', language: 'en', gender: 'female', description: 'Crisp presenter — podcasts and education.', archetype: 'Presenter', defaultEmotion: 'neutral', speedHint: { min: 0.95, max: 1.2, default: 1.05 } },
+    { id: 'qwen-sage', name: 'Sage', language: 'en', gender: 'female', description: 'Warm mentor — advice and reflection.', archetype: 'Mentor', defaultEmotion: 'calm', speedHint: { min: 0.8, max: 1.1, default: 0.95 } },
+    { id: 'qwen-ember', name: 'Ember', language: 'en', gender: 'female', description: 'Firebrand — conviction and passion.', archetype: 'Firebrand', defaultEmotion: 'happy', speedHint: { min: 1.05, max: 1.4, default: 1.2 } },
+    { id: 'qwen-echo', name: 'Echo', language: 'en', gender: 'neutral', description: 'Clean universal — the Confidante default.', archetype: 'Universal', defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.2, default: 1.0 } },
+    { id: 'qwen-fr-lumiere', name: 'Lumière', language: 'fr', gender: 'female', description: 'French artist — poetry and romance.', archetype: 'Artist', defaultEmotion: 'calm', speedHint: { min: 0.85, max: 1.15, default: 0.95 } },
+    { id: 'qwen-es-fuego', name: 'Fuego', language: 'es', gender: 'female', description: 'Spanish storyteller — vibrant narratives.', archetype: 'Storyteller', defaultEmotion: 'happy', speedHint: { min: 0.9, max: 1.3, default: 1.1 } },
+    { id: 'qwen-de-stern', name: 'Stern', language: 'de', gender: 'male', description: 'German authority — technical and formal.', archetype: 'Authority', defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.15, default: 1.0 } },
+    { id: 'qwen-pt-rio', name: 'Rio', language: 'pt', gender: 'male', description: 'Portuguese anchor — community and briefs.', archetype: 'Anchor', defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.2, default: 1.0 } },
+    { id: 'qwen-it-roma', name: 'Roma', language: 'it', gender: 'female', description: 'Italian storyteller.', archetype: 'Storyteller', defaultEmotion: 'calm', speedHint: { min: 0.85, max: 1.15, default: 0.95 } },
+    { id: 'qwen-nl-amstel', name: 'Amstel', language: 'nl', gender: 'neutral', description: 'Dutch presenter.', archetype: 'Presenter', defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.2, default: 1.0 } },
+    { id: 'qwen-sw-sauti', name: 'Sauti', language: 'sw', gender: 'female', description: 'Swahili storyteller.', archetype: 'Storyteller', defaultEmotion: 'calm', speedHint: { min: 0.85, max: 1.15, default: 0.95 } },
+    { id: 'qwen-zh-dragon', name: 'Dragon', language: 'zh', gender: 'male', description: 'Chinese scholar (English fallback voice).', archetype: 'Scholar', defaultEmotion: 'neutral', speedHint: { min: 0.85, max: 1.15, default: 1.0 } },
+    { id: 'qwen-zh-lotus', name: 'Lotus', language: 'zh', gender: 'female', description: 'Chinese companion (English fallback voice).', archetype: 'Companion', defaultEmotion: 'calm', speedHint: { min: 0.8, max: 1.1, default: 0.95 } },
+    { id: 'qwen-ja-sakura', name: 'Sakura', language: 'ja', gender: 'female', description: 'Japanese companion (English fallback voice).', archetype: 'Companion', defaultEmotion: 'calm', speedHint: { min: 0.8, max: 1.05, default: 0.9 } },
+    { id: 'qwen-ko-seoul', name: 'Seoul', language: 'ko', gender: 'female', description: 'Korean presenter (English fallback voice).', archetype: 'Presenter', defaultEmotion: 'neutral', speedHint: { min: 0.9, max: 1.2, default: 1.0 } },
+    { id: 'qwen-ar-sahara', name: 'Sahara', language: 'ar', gender: 'male', description: 'Arabic scholar (English fallback voice).', archetype: 'Scholar', defaultEmotion: 'neutral', speedHint: { min: 0.8, max: 1.1, default: 0.95 } },
+    { id: 'qwen-hi-ganga', name: 'Ganga', language: 'hi', gender: 'female', description: 'Hindi companion (English fallback voice).', archetype: 'Companion', defaultEmotion: 'happy', speedHint: { min: 0.85, max: 1.2, default: 1.0 } },
   ];
 }
 
@@ -87,12 +93,13 @@ async function health() {
   };
   const qwen = await probe(healthEndpoint) || await probe(endpoint);
   return {
+    engine: 'piper',
     qwen,
     google: googleFallbackEnabled(),
     configured: true,
     endpoint,
     googleFallback: googleFallbackEnabled(),
-    detail: qwen ? 'HTTP 200' : 'Qwen unreachable — Google Translate fallback ' + (googleFallbackEnabled() ? 'enabled' : 'disabled'),
+    detail: qwen ? 'HTTP 200' : 'Piper unreachable at ' + endpoint + ' — Google Translate fallback ' + (googleFallbackEnabled() ? 'enabled' : 'disabled'),
   };
 }
 
