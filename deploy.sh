@@ -81,9 +81,10 @@ fi
 # 2026-08-21 ROLODEX-OWN TTS: no zyppar-server dependency. If QWEN_TTS_ENDPOINT
 # is unset, rolodex-server uses http://localhost:8080/v1/audio/speech (the local
 # Qwen engine on the droplet, same host). Set it in THIS repo's .env to point
-# elsewhere.
+# elsewhere. The no-key Google Translate fallback is ON by default
+# (ROLODEX_TTS_GOOGLE_FALLBACK=1) so /tts still returns MP3 when Qwen is down.
 if ! grep -qE "^QWEN_TTS_ENDPOINT=" .env 2>/dev/null; then
-  echo "NOTE: QWEN_TTS_ENDPOINT is not set in .env — rolodex-server will use default http://localhost:8080/v1/audio/speech. If no local Qwen engine is running, /tts returns 502 and the app falls back to device speech."
+  echo "NOTE: QWEN_TTS_ENDPOINT is not set in .env — rolodex-server will use default http://localhost:8080/v1/audio/speech, with the no-key Google Translate fallback enabled. If both fail, /tts returns 502 and the app falls back to device speech."
 fi
 
 echo "rolodex-server update complete!"
