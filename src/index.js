@@ -116,11 +116,27 @@ app.use(express.json({ limit: '5mb' }));
 // called from localhost dev or a different origin — update checks (and every
 // other route) must answer preflight, or fetch dies with ERR_FAILED and the
 // app wrongly reports "up to date".
+// 2026-08-21 FIX: the droplet nginx already adds its own
+// Access-Control-Allow-Origin (echoing the request origin). Express must NOT
+// also send "*" — two ACAO headers (or "*, <origin>") are rejected by browsers,
+// which broke POST /tts from localhost dev and mobile PWA. Only set ACAO when
+// the request is hitting Express DIRECTLY (localhost dev), where nginx is not
+// in front to add it.
 app.use((req, res, next) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  const host = String(req.headers.host || '');
+  const isDirectExpress = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(host);
+  if (isDirectExpress) {
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  } else {
+    // Behind nginx: nginx owns the ACAO header. Only mirror methods/headers so
+    // preflight still passes when nginx forwards it.
+    res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') return res.sendStatus(204);
+  }
   next();
 });
 
