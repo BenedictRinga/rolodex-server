@@ -257,8 +257,8 @@ app.post('/api/rolodex/billing/checkout', async (req, res) => {
     if (!cfg) return res.status(400).json({ error: 'Unknown plan' });
 
     const origin = req.headers.origin || 'https://zyppar.com';
-    const successUrl = origin + '/openloop/?checkout=success&plan=' + plan + '&gateway=' + gateway;
-    const cancelUrl = origin + '/openloop/?checkout=cancelled';
+    const successUrl = origin + '/loopkeeper/?checkout=success&plan=' + plan + '&gateway=' + gateway;
+    const cancelUrl = origin + '/loopkeeper/?checkout=cancelled';
 
     // ── Stripe ──────────────────────────────────────────────────────────────
     if (gateway === 'stripe') {
@@ -616,7 +616,7 @@ app.post('/api/rolodex/invites', (req, res) => {
   if (!from || !room) return res.status(400).json({ error: 'from + room required' });
   const token = inviteToken();
   invites.set(token, { from: String(from).slice(0, 60), room: String(room).slice(0, 60), kind: kind === 'appointment' ? 'appointment' : 'message', title: String(title).slice(0, 120), when: String(when).slice(0, 32), text: String(text).slice(0, 600), createdAt: Date.now() });
-  res.json({ ok: true, token, url: 'https://zyppar.com/openloop/?invite=' + token, ogUrl: 'https://zyppar.com/api/openloop/invites/' + token + '/og' });
+  res.json({ ok: true, token, url: 'https://zyppar.com/loopkeeper/?invite=' + token, ogUrl: 'https://zyppar.com/api/openloop/invites/' + token + '/og' });
 });
 
 app.get('/api/rolodex/invites/:token', (req, res) => {
@@ -997,7 +997,7 @@ function escapeHtml(s) {
 // carries the human into the PWA invite. Absolute asset URLs (the page is served
 // from /api/rolodex/, not from the Angular app).
 function inviteOgPage(inv, token) {
-  const base = 'https://zyppar.com/openloop';
+  const base = 'https://zyppar.com/loopkeeper';
   const pwaUrl = inv ? `${base}/?invite=${encodeURIComponent(token)}` : `${base}/`;
   const hasInvite = !!inv;
   const kind = inv?.kind === 'appointment' ? 'appointment' : 'message';
@@ -1016,7 +1016,7 @@ function inviteOgPage(inv, token) {
         ? `A LoopKeeper appointment is waiting for you${inv.title ? `: ${escapeHtml(inv.title)}` : ''}${whenLabel ? ` — ${whenLabel}` : ''}.`
         : `“${escapeHtml(inv.text || '')}” — your card is ready on LoopKeeper.`)
     : 'Follow-through for the few who matter — nudge, draft, send, streak.';
-  const ogImage = 'https://zyppar.com/openloop/assets/loopkeeper/og-1200x630.png';
+  const ogImage = 'https://zyppar.com/loopkeeper/assets/loopkeeper/og-1200x630.png';
   const refresh = hasInvite ? `<meta http-equiv="refresh" content="0;url=${pwaUrl}">` : '';
   const body = hasInvite
     ? `<div class="kicker">${kind === 'appointment' ? 'Appointment from' : 'Message from'} ${from}</div>
@@ -1055,7 +1055,7 @@ body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#17120E;
 </head><body>
 <div class="shell">
   <img class="logo" src="${ogImage}" alt="LoopKeeper">
-  <br><img class="wordmark" src="https://zyppar.com/openloop/assets/loopkeeper/wordmark.svg" alt="LoopKeeper">
+  <br><img class="wordmark" src="https://zyppar.com/loopkeeper/assets/loopkeeper/wordmark.svg" alt="LoopKeeper">
   ${body}
   <div class="dim" style="margin-top:28px">Close the loop you keep meaning to close.</div>
 </div>
