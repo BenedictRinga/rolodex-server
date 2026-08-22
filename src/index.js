@@ -239,7 +239,7 @@ app.post('/api/rolodex/billing/checkout', async (req, res) => {
     const email = String(req.body?.email || '').trim();
     const plans = {
       basic: {
-        name: 'Rolodex Basic', id: 'rolodex-basic',
+        name: 'LoopKeeper Basic', id: 'rolodex-basic',
         amount: 100, // USD cents (Stripe)
         kobo: 100000, // NGN kobo (Paystack) = ₦1,000
         kes: 100, // KES whole shillings (Flutterwave/M-Pesa)
@@ -318,7 +318,7 @@ app.post('/api/rolodex/billing/checkout', async (req, res) => {
           amount: currency === 'KES' ? cfg.kes : cfg.amount / 100,
           currency,
           redirect_url: successUrl,
-          customer: { email: email || 'guest@rolodex.local', name: String(req.body?.name || 'Rolodex user').slice(0, 80) },
+          customer: { email: email || 'guest@rolodex.local', name: String(req.body?.name || 'LoopKeeper user').slice(0, 80) },
           customizations: { title: cfg.name, description: cfg.id },
           payment_options: currency === 'KES' ? 'mpesa,card' : 'card',
         }),
@@ -371,7 +371,7 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
     const briefing = String(req.body?.briefing || '').slice(0, 4000);
     if (!briefing) return res.status(400).json({ error: 'No briefing' });
     if (engine === 'deepseek') {
-      if (!envVar('DEEPSEEK_API_KEY')) return res.status(501).json({ error: 'DeepSeek key not configured on the Rolodex server' });
+      if (!envVar('DEEPSEEK_API_KEY')) return res.status(501).json({ error: 'DeepSeek key not configured on the LoopKeeper server' });
       const r = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('DEEPSEEK_API_KEY') },
@@ -392,7 +392,7 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
       return res.json({ draft });
     }
     if (engine === 'grok') {
-      if (!envVar('GROK_API_KEY')) return res.status(501).json({ error: 'Grok key not configured on the Rolodex server' });
+      if (!envVar('GROK_API_KEY')) return res.status(501).json({ error: 'Grok key not configured on the LoopKeeper server' });
       const r = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('GROK_API_KEY') },
@@ -961,7 +961,7 @@ function peekPage(devices, total) {
     })
     .join('\n');
   return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rolodex — Live dashboard</title><style>
+<title>LoopKeeper — Live dashboard</title><style>
 body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6e8f0;margin:0;padding:24px}
 h1{font-size:20px;margin:0 0 4px}h2{font-size:13px;color:#8b93b0;font-weight:400;margin:0 0 8px}
 .badge{display:inline-block;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;border-radius:20px;padding:3px 10px;font-size:12px;margin-left:8px}
@@ -973,9 +973,9 @@ th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #21262d}th{color:
 .dim{color:#8b93b0;font-size:12px}.live{color:#3fb950;font-weight:600}
 .foot{color:#8b93b0;font-size:12px;margin-top:20px}
 </style></head><body>
-<h1>Rolodex <span class="badge live">● LIVE</span></h1>
-<h2>Every device that talks to the fresh <code>rolodex</code> database — auto-refreshing every 5s.</h2>
-<div class="tab-note"><b>You are in the live dashboard (a new browser tab).</b> The Rolodex app is still open behind this tab — close this tab or switch back to continue there.</div>
+<h1>LoopKeeper <span class="badge live">● LIVE</span></h1>
+<h2>Every device that talks to the fresh <code>loopkeeper</code> database — auto-refreshing every 5s.</h2>
+<div class="tab-note"><b>You are in the live dashboard (a new browser tab).</b> The LoopKeeper app is still open behind this tab — close this tab or switch back to continue there.</div>
 <table>
 <caption>Recent names = the first 4 contact display names that device last pushed. Contacts / Follow-ups = the raw counts in that push, not deduplicated people.</caption>
 <thead><tr><th>Device</th><th>Last sync</th><th>Room</th><th>Contacts</th><th>Follow-ups</th><th>Recent names</th></tr></thead>
