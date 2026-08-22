@@ -1131,6 +1131,20 @@ io.on('connection', (socket) => {
 
   // 2026-08-19 WEBRTC SIGNALING: the server is a dumb relay - it never sees
   // media, only offer/answer/ICE. Peers in the same room exchange signals.
+  // 2026-08-22 (build 19): webrtc:join lets two devices that open the modal at
+  // the same time decide who sends the offer (lower callerId), avoiding glare.
+  socket.on('webrtc:join', (data) => {
+    const room = socket.data.chatRoom;
+    if (!room) return;
+    const callerId = String(data?.callerId || '').slice(0, 64);
+    if (!callerId) return;
+    socket.data.webrtcCallerId = callerId;
+    socket.to('room:' + room).emit('webrtc:join', {
+      name: socket.data.chatName || 'Someone',
+      callerId,
+    });
+  });
+
   socket.on('webrtc:signal', (data) => {
     const room = socket.data.chatRoom;
     if (!room) return;
@@ -1140,14 +1154,18 @@ io.on('connection', (socket) => {
       sdp: data?.sdp ? String(data.sdp).slice(0, 20000) : '',
       candidate: data?.candidate ? String(data.candidate).slice(0, 20000) : '',
       name: socket.data.chatName || 'Someone',
+      callerId: String(data?.callerId || socket.data.webrtcCallerId || '').slice(0, 64),
     };
     socket.to('room:' + room).emit('webrtc:signal', payload);
   });
 
-  socket.on('webrtc:leave', () => {
+  socket.on('webrtc:leave', (data) => {
     const room = socket.data.chatRoom;
     if (!room) return;
-    socket.to('room:' + room).emit('webrtc:leave', { name: socket.data.chatName || 'Someone' });
+    socket.to('room:' + room).emit('webrtc:leave', {
+      name: socket.data.chatName || 'Someone',
+      callerId: String(data?.callerId || socket.data.webrtcCallerId || '').slice(0, 64),
+    });
   });
 
   // 2026-08-19 VIDEO CLIP MESSAGING: short reminder/greeting clips ride the
@@ -1168,6 +1186,12 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     if (socket.data.chatRoom) {
       socket.to('room:' + socket.data.chatRoom).emit('chat:left', { name: socket.data.chatName, ts: Date.now() });
+      if (socket.data.webrtcCallerId) {
+        socket.to('room:' + socket.data.chatRoom).emit('webrtc:leave', {
+          name: socket.data.chatName || 'Someone',
+          callerId: socket.data.webrtcCallerId,
+        });
+      }
       try {
         io.in('room:' + socket.data.chatRoom).fetchSockets().then((peers) => {
           socket.to('room:' + socket.data.chatRoom).emit('chat:present', { count: Math.max(0, peers.length - 1) });
