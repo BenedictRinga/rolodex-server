@@ -1016,7 +1016,7 @@ function inviteOgPage(inv, token) {
         ? `A LoopKeeper appointment is waiting for you${inv.title ? `: ${escapeHtml(inv.title)}` : ''}${whenLabel ? ` — ${whenLabel}` : ''}.`
         : `“${escapeHtml(inv.text || '')}” — your card is ready on LoopKeeper.`)
     : 'Follow-through for the few who matter — nudge, draft, send, streak.';
-  const ogImage = 'https://zyppar.com/openloop/assets/loopkeeper/tile.svg';
+  const ogImage = 'https://zyppar.com/openloop/assets/loopkeeper/og-1200x630.png';
   const refresh = hasInvite ? `<meta http-equiv="refresh" content="0;url=${pwaUrl}">` : '';
   const body = hasInvite
     ? `<div class="kicker">${kind === 'appointment' ? 'Appointment from' : 'Message from'} ${from}</div>
