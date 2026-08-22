@@ -246,7 +246,7 @@ app.post('/api/rolodex/billing/checkout', async (req, res) => {
         paddlePriceId: envVar('PADDLE_BASIC_PRICE_ID'),
       },
       confidante: {
-        name: 'RolodexAI Confidante', id: 'rolodex-confidante',
+        name: 'LoopKeeper Confidante', id: 'rolodex-confidante',
         amount: 500, // USD cents (Stripe)
         kobo: 500000, // NGN kobo (Paystack) = ₦5,000
         kes: 500, // KES whole shillings (Flutterwave/M-Pesa)
@@ -378,7 +378,7 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
         body: JSON.stringify({
           model: 'deepseek-chat',
           messages: [
-            { role: 'system', content: 'You are RolodexAI, a confidential secretary. You proffer messages; the user hits Send. Keep it warm, human, one paragraph, in the user\'s voice.' },
+            { role: 'system', content: 'You are LoopKeeper, a confidential secretary. You proffer messages; the user hits Send. Keep it warm, human, one paragraph, in the user\'s voice.' },
             { role: 'user', content: briefing },
           ],
           max_tokens: 220,
@@ -399,7 +399,7 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
         body: JSON.stringify({
           model: 'grok-2-latest',
           messages: [
-            { role: 'system', content: 'You are RolodexAI, a confidential secretary. You proffer messages; the user hits Send. Keep it warm, human, one paragraph, in the user\'s voice.' },
+            { role: 'system', content: 'You are LoopKeeper, a confidential secretary. You proffer messages; the user hits Send. Keep it warm, human, one paragraph, in the user\'s voice.' },
             { role: 'user', content: briefing },
           ],
           max_tokens: 220,
@@ -420,7 +420,7 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
 
 // 2026-08-19 REAL CHAT WITH ROLODEXAI — a genuine conversation, not presets.
 // The user talks to the Confidante (DeepSeek/Grok through ROLODEX's keys) about
-// improving RolodexAI OR getting help using it. Conversation history is passed
+// improving LoopKeeper OR getting help using it. Conversation history is passed
 // through transiently and never stored. If no engine is configured/reachable
 // the reply is an honest fallback (the frontend then offers the free
 // DeepSeek/Grok chats).
@@ -532,7 +532,7 @@ app.post('/api/rolodex/agent/compose', async (req, res) => {
       const r = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('GROK_API_KEY') },
-        body: JSON.stringify({ model: 'grok-2-latest', messages: [{ role: 'system', content: 'You are RolodexAI, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'grok-2-latest', messages: [{ role: 'system', content: 'You are LoopKeeper, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
       });
       if (r.ok) {
         const data = await r.json();
@@ -544,7 +544,7 @@ app.post('/api/rolodex/agent/compose', async (req, res) => {
       const r = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('DEEPSEEK_API_KEY') },
-        body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'system', content: 'You are RolodexAI, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'system', content: 'You are LoopKeeper, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
       });
       if (r.ok) {
         const data = await r.json();
@@ -571,7 +571,7 @@ app.get('/api/rolodex/link-preview', async (req, res) => {
     if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
-    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RolodexAI/1.0)' } });
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LoopKeeper/1.0)' } });
     clearTimeout(timer);
     const html = await r.text();
     const grab = (re) => { const m = html.match(re); return m?.[1] ? String(m[1]).replace(/&amp;/g, '&').replace(/&quot;/g, '"').trim().slice(0, 300) : ''; };
@@ -616,7 +616,7 @@ app.post('/api/rolodex/invites', (req, res) => {
   if (!from || !room) return res.status(400).json({ error: 'from + room required' });
   const token = inviteToken();
   invites.set(token, { from: String(from).slice(0, 60), room: String(room).slice(0, 60), kind: kind === 'appointment' ? 'appointment' : 'message', title: String(title).slice(0, 120), when: String(when).slice(0, 32), text: String(text).slice(0, 600), createdAt: Date.now() });
-  res.json({ ok: true, token, url: 'https://zyppar.com/rolodex/?invite=' + token, ogUrl: 'https://zyppar.com/api/rolodex/invites/' + token + '/og' });
+  res.json({ ok: true, token, url: 'https://zyppar.com/openloop/?invite=' + token, ogUrl: 'https://zyppar.com/api/openloop/invites/' + token + '/og' });
 });
 
 app.get('/api/rolodex/invites/:token', (req, res) => {
@@ -627,7 +627,7 @@ app.get('/api/rolodex/invites/:token', (req, res) => {
 
 // 2026-08-18 THE OG-TAGGED LANDING - the SHAREAPP moment. This is the URL the
 // share text carries. WhatsApp / email / X fetch it and see the branded card in
-// the preview (logo + "You have a message on RolodexAI"); a human tap gets a
+// the preview (logo + "You have a message on LoopKeeper"); a human tap gets a
 // branded splash and is carried into the PWA invite landing automatically.
 app.get('/api/rolodex/invites/:token/og', (req, res) => {
   const token = String(req.params.token || '');
@@ -684,7 +684,7 @@ app.post('/api/rolodex/sync', async (req, res) => {
     const { deviceId, contacts = [], followUps = [], deviceName = '', room = '', ownerPhone = '', ownerName = '' } = req.body || {};
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' });
     // 2026-08-18 THE AGENT'S COURTESY: a brand-new device gets a welcome from
-    // RolodexAI on its very first connection - even free users (trial period).
+    // LoopKeeper on its very first connection - even free users (trial period).
     const existing = await DeviceState.findOne({ deviceId }).lean();
     const isNewDevice = !existing;
     // 2026-08-19 THE 7-DAY TRIAL: starts on first use (first sync) and is never
@@ -741,7 +741,7 @@ app.post('/api/rolodex/sync', async (req, res) => {
       },
       // 2026-08-18 THE AGENT SPEAKS FIRST: only on a brand-new device.
       ...(isNewDevice ? {
-        welcome: "Karibu sana! I'm RolodexAI, your Confidante. Your contacts stay yours — I'm here to remember the tiny loops and proffer the messages. Add the 4 W's (When / Where / Who / Why) on a card and I'll start drafting in your voice. You're on a 7-day Confidante trial."
+        welcome: "Karibu sana! I'm LoopKeeper, your Confidante. Your contacts stay yours — I'm here to remember the tiny loops and proffer the messages. Add the 4 W's (When / Where / Who / Why) on a card and I'll start drafting in your voice. You're on a 7-day Confidante trial."
       } : {}),
     });
   } catch (err) {
@@ -997,7 +997,7 @@ function escapeHtml(s) {
 // carries the human into the PWA invite. Absolute asset URLs (the page is served
 // from /api/rolodex/, not from the Angular app).
 function inviteOgPage(inv, token) {
-  const base = 'https://zyppar.com/rolodex';
+  const base = 'https://zyppar.com/openloop';
   const pwaUrl = inv ? `${base}/?invite=${encodeURIComponent(token)}` : `${base}/`;
   const hasInvite = !!inv;
   const kind = inv?.kind === 'appointment' ? 'appointment' : 'message';
@@ -1008,31 +1008,31 @@ function inviteOgPage(inv, token) {
   }
   const ogTitle = hasInvite
     ? (kind === 'appointment'
-        ? `${escapeHtml(inv.from)} invited you to ${escapeHtml(inv.title || 'an appointment')} on RolodexAI`
-        : `${escapeHtml(inv.from)} sent you a message on RolodexAI`)
-    : 'You have a message on RolodexAI';
+        ? `${escapeHtml(inv.from)} invited you to ${escapeHtml(inv.title || 'an appointment')} on LoopKeeper`
+        : `${escapeHtml(inv.from)} sent you a message on LoopKeeper`)
+    : 'You have a message on LoopKeeper';
   const ogDesc = hasInvite
     ? (kind === 'appointment'
-        ? `A RolodexAI appointment is waiting for you${inv.title ? `: ${escapeHtml(inv.title)}` : ''}${whenLabel ? ` — ${whenLabel}` : ''}.`
-        : `“${escapeHtml(inv.text || '')}” — your card is ready on RolodexAI.`)
-    : 'The contacts app that remembers why you know someone.';
-  const ogImage = 'https://zyppar.com/rolodex/assets/rolodex/icon-512.png';
+        ? `A LoopKeeper appointment is waiting for you${inv.title ? `: ${escapeHtml(inv.title)}` : ''}${whenLabel ? ` — ${whenLabel}` : ''}.`
+        : `“${escapeHtml(inv.text || '')}” — your card is ready on LoopKeeper.`)
+    : 'Follow-through for the few who matter — nudge, draft, send, streak.';
+  const ogImage = 'https://zyppar.com/openloop/assets/loopkeeper/tile.svg';
   const refresh = hasInvite ? `<meta http-equiv="refresh" content="0;url=${pwaUrl}">` : '';
   const body = hasInvite
     ? `<div class="kicker">${kind === 'appointment' ? 'Appointment from' : 'Message from'} ${from}</div>
        <div class="title">${kind === 'appointment' ? escapeHtml(inv.title || 'An appointment') : 'Your card is ready'}</div>
        <div class="dim">${kind === 'appointment' ? (whenLabel || '') : '“' + escapeHtml(inv.text || '') + '”'}</div>
-       <a class="btn" href="${pwaUrl}">Open in Rolodex</a>`
-    : `<div class="kicker">RolodexAI</div>
+       <a class="btn" href="${pwaUrl}">Open in LoopKeeper</a>`
+    : `<div class="kicker">LoopKeeper</div>
        <div class="title">This invite has expired</div>
-       <div class="dim">Ask your friend to send it again — or grab the app and never forget to stay in touch… again.</div>
-       <a class="btn" href="https://play.google.com/store/apps/details?id=com.zyppar.rolodexai">Get RolodexAI</a>`;
+       <div class="dim">Ask your friend to send it again — or close the loop you keep meaning to close.</div>
+       <a class="btn" href="https://play.google.com/store/apps/details?id=com.zyppar.openloop">Get LoopKeeper</a>`;
   return `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 ${refresh}
 <title>${ogTitle}</title>
-<meta property="og:site_name" content="RolodexAI">
+<meta property="og:site_name" content="LoopKeeper">
 <meta property="og:title" content="${ogTitle}">
 <meta property="og:description" content="${ogDesc}">
 <meta property="og:image" content="${ogImage}">
@@ -1043,21 +1043,21 @@ ${refresh}
 <meta name="twitter:description" content="${ogDesc}">
 <meta name="twitter:image" content="${ogImage}">
 <style>
-body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#12141c;color:#e6e8f0;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center}
+body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:#17120E;color:#FAF6F0;min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center}
 .shell{max-width:420px;padding:32px}
 .logo{width:88px;height:88px;border-radius:22px}
 .wordmark{width:200px;margin-top:16px}
-.kicker{color:#8b93b0;font-size:13px;margin-top:20px}
+.kicker{color:#B8AC9E;font-size:13px;margin-top:20px}
 .title{font-size:20px;font-weight:600;margin-top:8px}
-.dim{color:#8b93b0;font-size:14px;margin-top:8px;line-height:1.5}
-.btn{display:inline-block;margin-top:24px;background:#f5c542;color:#12141c;font-weight:600;text-decoration:none;padding:12px 22px;border-radius:14px}
+.dim{color:#B8AC9E;font-size:14px;margin-top:8px;line-height:1.5}
+.btn{display:inline-block;margin-top:24px;background:#FF5A36;color:#17120E;font-weight:600;text-decoration:none;padding:12px 22px;border-radius:14px}
 </style>
 </head><body>
 <div class="shell">
-  <img class="logo" src="${ogImage}" alt="RolodexAI">
-  <br><img class="wordmark" src="https://zyppar.com/rolodex/assets/rolodex/name-512.png" alt="RolodexAI">
+  <img class="logo" src="${ogImage}" alt="LoopKeeper">
+  <br><img class="wordmark" src="https://zyppar.com/openloop/assets/loopkeeper/wordmark.svg" alt="LoopKeeper">
   ${body}
-  <div class="dim" style="margin-top:28px">You never forget to stay in touch… again</div>
+  <div class="dim" style="margin-top:28px">Close the loop you keep meaning to close.</div>
 </div>
 </body></html>`;
 }
