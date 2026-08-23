@@ -1013,8 +1013,8 @@ app.post('/api/rolodex/trial/reopen', async (req, res) => {
   }
 });
 
-// 2026-08-19 CHAT WITH ROLODEXAI — user suggestions land here and are read in
-// the Investors portal's extended (-x2) room.
+// 2026-08-19 CHAT WITH AI ASSISTANT — user suggestions + frustration land here
+// and are read in the Investors portal's extended (-x2) room.
 app.post('/api/rolodex/feedback', async (req, res) => {
   try {
     const { deviceId = '', deviceName = '', messages = [], summary = '' } = req.body || {};
