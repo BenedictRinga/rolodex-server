@@ -109,6 +109,19 @@ const InvestorFeedback = conn.model('InvestorFeedback', new mongoose.Schema({
   summary: { type: String, required: true },
 }, { timestamps: true }));
 
+// 2026-08-23 ANONYMOUS PRODUCT ANALYTICS — no contacts, no PII. The frontend
+// sends lightweight event names (app_launch, session_start/end, card_added,
+// message_sent, loop_closed, billing_started, …) with a stable deviceId so we
+// can compute DAU/WAU/MAU, sessions, retention cohorts, activation and
+// conversion without ever receiving contact data.
+const AnalyticsEvent = conn.model('AnalyticsEvent', new mongoose.Schema({
+  deviceId: { type: String, default: '', index: true },
+  event: { type: String, required: true, index: true },
+  props: { type: mongoose.Schema.Types.Mixed, default: {} },
+  sessionId: { type: String, default: '' },
+  ts: { type: Date, default: Date.now, index: true },
+}, { timestamps: true }));
+
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
@@ -848,12 +861,130 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
       rooms,
       timeline,
       topDevices,
+      // 2026-08-23 REAL PRODUCT ANALYTICS: anonymous event stream, not sync stamps.
+      analytics: await computeAnalyticsSummary(),
     });
   } catch (err) {
     console.error('[rolodex/investor/summary]', err.message);
     res.status(500).json({ error: 'summary failed: ' + (err?.message || 'unknown') });
   }
 });
+
+// ── 2026-08-23 ANONYMOUS PRODUCT ANALYTICS ───────────────────────────────────
+// The investor portal now reports real presence/frequency/time/retention from
+// lightweight events. No contacts, no PII — only deviceId + event names.
+
+app.post('/api/rolodex/analytics/events', async (req, res) => {
+  try {
+    const deviceId = String(req.body?.deviceId || '').slice(0, 80);
+    const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 100) : [];
+    if (!deviceId || !events.length) return res.status(400).json({ error: 'deviceId + events required' });
+    const docs = events
+      .map((e) => ({
+        deviceId,
+        event: String(e?.event || '').slice(0, 60),
+        props: e?.props && typeof e.props === 'object' ? e.props : {},
+        sessionId: String(e?.sessionId || '').slice(0, 60),
+        ts: e?.ts ? new Date(e.ts) : new Date(),
+      }))
+      .filter((e) => e.event);
+    if (docs.length) await AnalyticsEvent.insertMany(docs);
+    res.json({ ok: true, accepted: docs.length });
+  } catch (err) {
+    res.status(500).json({ error: 'analytics ingest failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+async function analyticsDistinctDevices(since) {
+  return AnalyticsEvent.distinct('deviceId', { ts: { $gte: since } });
+}
+
+async function computeAnalyticsSummary() {
+  const now = Date.now();
+  const h = 3600_000;
+  const d = 24 * h;
+  const dayAgo = new Date(now - d);
+  const weekAgo = new Date(now - 7 * d);
+  const monthAgo = new Date(now - 30 * d);
+
+  const [dau, wau, mau] = await Promise.all([
+    analyticsDistinctDevices(dayAgo),
+    analyticsDistinctDevices(weekAgo),
+    analyticsDistinctDevices(monthAgo),
+  ]);
+
+  const sessions24h = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: dayAgo } });
+  const sessions7d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: weekAgo } });
+  const sessions30d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: monthAgo } });
+
+  const [avgSession] = await AnalyticsEvent.aggregate([
+    { $match: { event: 'session_end', 'props.duration': { $gt: 0 }, ts: { $gte: monthAgo } } },
+    { $group: { _id: null, avg: { $avg: '$props.duration' }, count: { $sum: 1 } } },
+  ]);
+
+  // Activation: distinct devices that ever hit each milestone.
+  const activationEvents = ['card_added', 'followup_created', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
+  const activation = {};
+  for (const ev of activationEvents) {
+    activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev })).length;
+  }
+
+  // Retention cohorts: last 7 days, first app_launch per device, D1/D7 return.
+  const firstSeen = await AnalyticsEvent.aggregate([
+    { $match: { event: 'app_launch' } },
+    { $group: { _id: '$deviceId', first: { $min: '$ts' } } },
+  ]);
+  const firstMap = new Map(firstSeen.map((f) => [f._id, new Date(f.first).getTime()]));
+  const retention = [];
+  for (let i = 6; i >= 0; i--) {
+    const start = now - (i + 1) * d;
+    const end = now - i * d;
+    const devices = firstSeen
+      .filter((f) => {
+        const t = new Date(f.first).getTime();
+        return t >= start && t < end;
+      })
+      .map((f) => f._id);
+    if (!devices.length) {
+      retention.push({ day: new Date(start).toISOString().slice(0, 10), size: 0, d1: 0, d7: 0 });
+      continue;
+    }
+    const events = await AnalyticsEvent.find({ deviceId: { $in: devices } }).select('deviceId ts').lean();
+    const evMap = new Map();
+    for (const e of events) {
+      if (!evMap.has(e.deviceId)) evMap.set(e.deviceId, []);
+      evMap.get(e.deviceId).push(new Date(e.ts).getTime());
+    }
+    let d1 = 0;
+    let d7 = 0;
+    for (const dev of devices) {
+      const first = firstMap.get(dev);
+      const times = evMap.get(dev) || [];
+      if (times.some((t) => t >= first + d && t < first + 2 * d)) d1++;
+      if (times.some((t) => t >= first + 7 * d && t < first + 8 * d)) d7++;
+    }
+    retention.push({ day: new Date(start).toISOString().slice(0, 10), size: devices.length, d1, d7 });
+  }
+
+  const topEvents = await AnalyticsEvent.aggregate([
+    { $match: { ts: { $gte: weekAgo } } },
+    { $group: { _id: '$event', count: { $sum: 1 } } },
+    { $sort: { count: -1 } },
+    { $limit: 12 },
+  ]);
+
+  return {
+    dau: dau.length,
+    wau: wau.length,
+    mau: mau.length,
+    sessions: { last24h: sessions24h, last7d: sessions7d, last30d: sessions30d },
+    avgSessionSeconds: Math.round(Number(avgSession?.avg) || 0),
+    sessionsRecorded30d: avgSession?.count || 0,
+    activation,
+    retention,
+    topEvents,
+  };
+}
 
 // 2026-08-19 THE TRIAL REOPEN — the owner/investor can re-open the 7-day trial
 // for a device when desirable. It never happens automatically.
