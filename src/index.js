@@ -437,7 +437,10 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
 // through transiently and never stored. If no engine is configured/reachable
 // the reply is an honest fallback (the frontend then offers the free
 // DeepSeek/Grok chats).
+// 2026-08-19 AI CHAT — stateless privacy: messages are forwarded to the
+// upstream AI (DeepSeek/xAI) in memory only. NEVER persisted, NEVER logged.
 app.post('/api/rolodex/chat', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   try {
     const engine = String(req.body?.engine || 'deepseek');
     const rawMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
@@ -1015,13 +1018,13 @@ app.post('/api/rolodex/trial/reopen', async (req, res) => {
 
 // 2026-08-19 CHAT WITH AI ASSISTANT — user suggestions + frustration land here
 // and are read in the Investors portal's extended (-x2) room.
+// 2026-08-24 PRIVACY HARDENING: only the AI-gleaned summary is stored. Raw
+// conversation text is intentionally discarded, never persisted.
 app.post('/api/rolodex/feedback', async (req, res) => {
   try {
-    const { deviceId = '', deviceName = '', messages = [], summary = '' } = req.body || {};
-    const cleanMessages = Array.isArray(messages)
-      ? messages.map((m) => String(typeof m === 'string' ? m : (m?.text || '')).trim().slice(0, 1000)).filter(Boolean).slice(0, 20)
-      : [];
-    const cleanSummary = String(summary || cleanMessages.join(' ')).trim().slice(0, 3000);
+    const { deviceId = '', deviceName = '', summary = '' } = req.body || {};
+    const cleanMessages = []; // raw messages are never stored
+    const cleanSummary = String(summary || '').trim().slice(0, 3000);
     if (!cleanSummary) return res.status(400).json({ error: 'summary required' });
     await InvestorFeedback.create({
       deviceId: String(deviceId || '').slice(0, 80),
