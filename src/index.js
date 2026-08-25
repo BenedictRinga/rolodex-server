@@ -132,6 +132,7 @@ const TranslationSuggestion = conn.model('TranslationSuggestion', new mongoose.S
   keys: { type: mongoose.Schema.Types.Mixed, default: {} },
   source: { type: String, default: 'portal' },
   approved: { type: Boolean, default: false },
+  rejected: { type: Boolean, default: false },
 }, { timestamps: true }));
 
 const app = express();
@@ -985,6 +986,81 @@ app.get('/api/rolodex/translations/summary', async (req, res) => {
     res.json({ ok: true, total, byLang, latest });
   } catch (err) {
     res.status(500).json({ error: 'translation summary failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-25 REVIEW QUEUE — pending/approved/rejected suggestions for a lang.
+app.get('/api/rolodex/translations/suggestions', async (req, res) => {
+  try {
+    const lang = String(req.query?.lang || '').slice(0, 20);
+    const status = String(req.query?.status || 'pending');
+    const limit = Math.min(Number(req.query?.limit) || 100, 500);
+    const q = {};
+    if (lang) q.lang = lang;
+    if (status === 'pending') { q.approved = false; q.rejected = false; }
+    else if (status === 'approved') { q.approved = true; }
+    else if (status === 'rejected') { q.rejected = true; }
+    const items = await TranslationSuggestion.find(q)
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .select('lang keys source approved rejected createdAt')
+      .lean();
+    res.json({ ok: true, status, items });
+  } catch (err) {
+    res.status(500).json({ error: 'translation suggestions failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-25 APPROVE / REJECT — maintainer review actions.
+app.post('/api/rolodex/translations/:id/approve', async (req, res) => {
+  try {
+    const doc = await TranslationSuggestion.findById(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'not found' });
+    doc.approved = true;
+    doc.rejected = false;
+    await doc.save();
+    res.json({ ok: true, id: String(doc._id) });
+  } catch (err) {
+    res.status(500).json({ error: 'approve failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+app.post('/api/rolodex/translations/:id/reject', async (req, res) => {
+  try {
+    const doc = await TranslationSuggestion.findById(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'not found' });
+    doc.rejected = true;
+    doc.approved = false;
+    await doc.save();
+    res.json({ ok: true, id: String(doc._id) });
+  } catch (err) {
+    res.status(500).json({ error: 'reject failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-25 EXPORT APPROVED — aggregated keys per language for merging into
+// the shipped locale files (later-approved wins).
+app.get('/api/rolodex/translations/export', async (req, res) => {
+  try {
+    const lang = String(req.query?.lang || '').slice(0, 20);
+    const q = { approved: true };
+    if (lang) q.lang = lang;
+    const docs = await TranslationSuggestion.find(q).sort({ createdAt: 1 }).lean();
+    const merged = {};
+    for (const d of docs) {
+      if (d.keys && typeof d.keys === 'object') {
+        for (const [k, v] of Object.entries(d.keys)) {
+          if (k.startsWith('loopkeeper.') && String(v || '').trim()) merged[k] = String(v).trim();
+        }
+      }
+    }
+    const byLang = {};
+    for (const d of docs) {
+      byLang[d.lang] = (byLang[d.lang] || 0) + Object.keys(d.keys || {}).length;
+    }
+    res.json({ ok: true, lang: lang || 'all', keyCount: Object.keys(merged).length, byLang, keys: merged });
+  } catch (err) {
+    res.status(500).json({ error: 'translation export failed: ' + (err?.message || 'unknown') });
   }
 });
 
