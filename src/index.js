@@ -587,6 +587,25 @@ app.get('/api/rolodex/link-preview', async (req, res) => {
   try {
     const url = String(req.query?.url || '').trim();
     if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Invalid URL' });
+
+    // 2026-08-25 LOOPKEEPER BRAND GUARD: LoopKeeper URLs must NEVER preview as
+    // Zyppar. The static OG card is authoritative and immune to nginx/deploy
+    // drift on /loopkeeper/ — chat and Settings previews always read LoopKeeper.
+    // Covers the clean path and the invite deeplink (query string is ignored).
+    try {
+      const u = new URL(url);
+      const isLoopKeeperPath = u.hostname === 'zyppar.com' && (u.pathname === '/loopkeeper/' || u.pathname.startsWith('/loopkeeper') || u.pathname.startsWith('/openloop'));
+      if (isLoopKeeperPath) {
+        return res.json({
+          url,
+          host: u.hostname,
+          title: 'LoopKeeper — Close the loop you keep meaning to close',
+          image: 'https://zyppar.com/loopkeeper/assets/loopkeeper/og-1200x630.png',
+          description: 'Follow-through for the few who matter — nudge, draft, send, streak.',
+        });
+      }
+    } catch { /* malformed URL falls through to the generic scraper */ }
+
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 6000);
     const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LoopKeeper/1.0)' } });
