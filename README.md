@@ -43,6 +43,8 @@ Base path: `/api/rolodex` (legacy alias `/api/openloop` may still appear)
 | `POST /sync` | Device state sync (contacts/settings) |
 | `GET /state/:deviceId` | Fetch device state |
 | `POST /analytics/events` | Anonymous analytics batch ingest |
+| `POST /translations/contribute` | Anonymous community translation suggestions |
+| `GET /translations/summary` | Community translation totals, by language, latest |
 | `GET /investor/summary` | DAU/WAU/MAU, sessions, retention, activation |
 | `GET /live` | Live investor peek |
 | `POST /feedback` | Store feedback summary |

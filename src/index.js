@@ -123,6 +123,17 @@ const AnalyticsEvent = conn.model('AnalyticsEvent', new mongoose.Schema({
   ts: { type: Date, default: Date.now, index: true },
 }, { timestamps: true }));
 
+// 2026-08-25 COMMUNITY TRANSLATIONS — anonymous translation suggestions from
+// the in-app Help Translate portal. No email, no name, no device id: only the
+// language code + the keys the user chose to improve. Approved=false until a
+// maintainer reviews and merges them into the shipped locale files.
+const TranslationSuggestion = conn.model('TranslationSuggestion', new mongoose.Schema({
+  lang: { type: String, required: true, index: true },
+  keys: { type: mongoose.Schema.Types.Mixed, default: {} },
+  source: { type: String, default: 'portal' },
+  approved: { type: Boolean, default: false },
+}, { timestamps: true }));
+
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
@@ -916,6 +927,50 @@ app.post('/api/rolodex/analytics/events', async (req, res) => {
     res.json({ ok: true, accepted: docs.length });
   } catch (err) {
     res.status(500).json({ error: 'analytics ingest failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-25 COMMUNITY TRANSLATION INGEST — anonymous, capped, PII-free.
+app.post('/api/rolodex/translations/contribute', async (req, res) => {
+  try {
+    const lang = String(req.body?.lang || '').slice(0, 20);
+    const keysRaw = req.body?.keys && typeof req.body.keys === 'object' ? req.body.keys : {};
+    const keys = {};
+    let count = 0;
+    for (const [k, v] of Object.entries(keysRaw)) {
+      if (count >= 200) break;
+      const key = String(k || '').slice(0, 120);
+      const val = String(v || '').trim().slice(0, 500);
+      if (key.startsWith('loopkeeper.') && val) {
+        keys[key] = val;
+        count++;
+      }
+    }
+    if (!lang || !count) return res.status(400).json({ error: 'lang + keys required' });
+    const doc = await TranslationSuggestion.create({ lang, keys, source: 'portal' });
+    res.json({ ok: true, id: String(doc._id), accepted: count });
+  } catch (err) {
+    res.status(500).json({ error: 'translation ingest failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-25 COMMUNITY TRANSLATION SUMMARY — for the Investors portal + review.
+app.get('/api/rolodex/translations/summary', async (req, res) => {
+  try {
+    const total = await TranslationSuggestion.countDocuments();
+    const byLang = await TranslationSuggestion.aggregate([
+      { $group: { _id: '$lang', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 50 },
+    ]);
+    const latest = await TranslationSuggestion.find()
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('lang keys createdAt')
+      .lean();
+    res.json({ ok: true, total, byLang, latest });
+  } catch (err) {
+    res.status(500).json({ error: 'translation summary failed: ' + (err?.message || 'unknown') });
   }
 });
 
