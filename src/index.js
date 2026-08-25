@@ -17,6 +17,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 const { CHAT_DIRECTIVE } = require('./chat-directive');
+const { AGENT_SUBDIRECTIVES } = require('./agents-directive');
 
 function resolveMongoUri() {
   if (process.env.MONGO_DB_URI_ROLODEX) return process.env.MONGO_DB_URI_ROLODEX;
@@ -540,6 +541,7 @@ app.post('/api/rolodex/agent/compose', async (req, res) => {
       contact?.rolodex?.followUp ? `Follow-up: ${contact.rolodex.followUp}` : '',
       instruction ? `User instruction: ${String(instruction).slice(0, 1200)}` : '',
     ].filter(Boolean).join('. ');
+    const sysPrompt = AGENT_SUBDIRECTIVES[String(req.body?.subAgent || 'composer')] || 'You are LoopKeeper, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.';
     const briefing = currentDraft
       ? `Refine this draft for ${name}. ${contextBits}\nCurrent draft:\n${currentDraft}\nReturn only the improved message.`
       : `The user is ${senderName}. ${contextBits}. Occasion: ${occasion}. Return a warm, human, one-paragraph message in the user's voice.`;
@@ -548,7 +550,7 @@ app.post('/api/rolodex/agent/compose', async (req, res) => {
       const r = await fetch('https://api.x.ai/v1/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('GROK_API_KEY') },
-        body: JSON.stringify({ model: 'grok-2-latest', messages: [{ role: 'system', content: 'You are LoopKeeper, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'grok-2-latest', messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
       });
       if (r.ok) {
         const data = await r.json();
@@ -560,7 +562,7 @@ app.post('/api/rolodex/agent/compose', async (req, res) => {
       const r = await fetch('https://api.deepseek.com/chat/completions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + envVar('DEEPSEEK_API_KEY') },
-        body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'system', content: 'You are LoopKeeper, a confidential secretary. Proffer messages; the user hits Send. Keep it warm, human, one paragraph.' }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
+        body: JSON.stringify({ model: 'deepseek-chat', messages: [{ role: 'system', content: sysPrompt }, { role: 'user', content: briefing }], max_tokens: 220, temperature: 0.7 }),
       });
       if (r.ok) {
         const data = await r.json();
