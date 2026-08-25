@@ -12,6 +12,7 @@
 //   GET  /api/rolodex/health -> liveness for the droplet deploy.
 //   GET  /api/rolodex/state/:deviceId -> the device's stored state (read-only).
 const fs = require('fs');
+const path = require('path');
 const http = require('http');
 const express = require('express');
 const mongoose = require('mongoose');
@@ -1061,6 +1062,48 @@ app.get('/api/rolodex/translations/export', async (req, res) => {
     res.json({ ok: true, lang: lang || 'all', keyCount: Object.keys(merged).length, byLang, keys: merged });
   } catch (err) {
     res.status(500).json({ error: 'translation export failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-25 ONE-CLICK MERGE — write approved translations into the deployed
+// PWA's locale files. Set FRONTEND_DIST to the served www directory (default
+// /var/www/rolodex). Merges into each locale's loopkeeper section.
+app.post('/api/rolodex/translations/merge', async (req, res) => {
+  try {
+    const lang = String(req.body?.lang || '').slice(0, 20);
+    const q = { approved: true };
+    if (lang) q.lang = lang;
+    const docs = await TranslationSuggestion.find(q).sort({ createdAt: 1 }).lean();
+    const mergedByLang = {};
+    for (const d of docs) {
+      const per = mergedByLang[d.lang] || (mergedByLang[d.lang] = {});
+      if (d.keys && typeof d.keys === 'object') {
+        for (const [k, v] of Object.entries(d.keys)) {
+          if (k.startsWith('loopkeeper.') && String(v || '').trim()) per[k] = String(v).trim();
+        }
+      }
+    }
+    const dist = process.env.FRONTEND_DIST || '/var/www/rolodex';
+    const i18nDir = path.join(dist, 'assets', 'i18n');
+    if (!fs.existsSync(i18nDir)) {
+      return res.status(400).json({ error: `i18n dir not found at ${i18nDir} — set FRONTEND_DIST` });
+    }
+    const written = {};
+    for (const [code, keys] of Object.entries(mergedByLang)) {
+      const file = path.join(i18nDir, `${code}.json`);
+      let data = {};
+      try {
+        data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch {
+        /* new locale file */
+      }
+      data.loopkeeper = Object.assign({}, data.loopkeeper || {}, keys);
+      fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+      written[code] = Object.keys(keys).length;
+    }
+    res.json({ ok: true, dist, written });
+  } catch (err) {
+    res.status(500).json({ error: 'translation merge failed: ' + (err?.message || 'unknown') });
   }
 });
 

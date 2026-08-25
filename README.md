@@ -45,6 +45,11 @@ Base path: `/api/rolodex` (legacy alias `/api/openloop` may still appear)
 | `POST /analytics/events` | Anonymous analytics batch ingest |
 | `POST /translations/contribute` | Anonymous community translation suggestions |
 | `GET /translations/summary` | Community translation totals, by language, latest |
+| `GET /translations/suggestions` | Review queue: pending/approved/rejected |
+| `POST /translations/:id/approve` | Approve a translation suggestion |
+| `POST /translations/:id/reject` | Reject a translation suggestion |
+| `GET /translations/export` | Aggregated approved keys per language |
+| `POST /translations/merge` | One-click merge approved keys into served locale files (FRONTEND_DIST) |
 | `GET /investor/summary` | DAU/WAU/MAU, sessions, retention, activation |
 | `GET /live` | Live investor peek |
 | `POST /feedback` | Store feedback summary |
