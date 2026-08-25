@@ -898,6 +898,20 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
       topDevices,
       // 2026-08-23 REAL PRODUCT ANALYTICS: anonymous event stream, not sync stamps.
       analytics: await computeAnalyticsSummary(),
+      // 2026-08-25 COMMUNITY TRANSLATIONS: anonymous contributions from the portal.
+      translations: {
+        total: await TranslationSuggestion.countDocuments(),
+        byLang: await TranslationSuggestion.aggregate([
+          { $group: { _id: '$lang', count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 50 },
+        ]),
+        latest: await TranslationSuggestion.find()
+          .sort({ createdAt: -1 })
+          .limit(10)
+          .select('lang keys createdAt')
+          .lean(),
+      },
     });
   } catch (err) {
     console.error('[rolodex/investor/summary]', err.message);
