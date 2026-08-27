@@ -470,9 +470,20 @@ app.post('/api/rolodex/chat', async (req, res) => {
       }))
       .filter((m) => m.content);
     if (!messages.length) return res.status(400).json({ error: 'messages required' });
+    // 2026-08-27 CHAT IN THE USER'S LANGUAGE: an Arabic-UI user must never get
+    // English back just because the directive was written in English. The
+    // client may pass lang explicitly (polish + Confidante do); every other
+    // caller is covered by the browser's own Accept-Language header.
+    const lang = String(req.body?.lang || req.headers['accept-language'] || '')
+      .slice(0, 32).split(',')[0].trim() || 'en';
     const system = {
       role: 'system',
-      content: CHAT_DIRECTIVE,
+      content: CHAT_DIRECTIVE
+        + `\n\nLANGUAGE RULE (this request): the user's app/device language is "${lang}".`
+        + ' Write your ENTIRE reply in that language. If the user\'s latest message'
+        + ' is clearly written in a different language, mirror THAT language instead.'
+        + ' Never answer in English merely by default — English only when it IS the'
+        + " user's language. Proper names stay exactly as the user wrote them.",
     };
     const apiMessages = [system, ...messages];
 
