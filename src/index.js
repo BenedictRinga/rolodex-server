@@ -167,19 +167,23 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2026-08-21 OPENLOOP REBRAND: the frontend now calls /api/openloop/… — keep
-// /api/rolodex/… as a backward-compatible alias by rewriting the path here so
-// every existing route works unchanged under both prefixes.
+// 2026-08-21 OPENLOOP REBRAND → 2026-08-26 LOOPKEEPER CANONICAL: the frontend
+// now calls /api/loopkeeper/… (canonical). /api/openloop/… and /api/rolodex/…
+// remain backward-compatible aliases — already-shared invite OG URLs and
+// deployed PWAs keep working; openloop is DEPRECATED and must not be used in
+// new code or new share links.
 app.use((req, _res, next) => {
-  if (req.url.startsWith('/api/openloop')) {
-    req.url = '/api/rolodex' + req.url.slice('/api/openloop'.length);
+  const m = req.url.match(/^\/api\/(openloop|loopkeeper)(?=\/|$)/);
+  if (m) {
+    req.url = '/api/rolodex' + req.url.slice(('/api/' + m[1]).length);
     req.originalUrl = req.url;
   }
   next();
 });
 
-// 2026-08-20 ZYPPAR-STYLE UPDATES: /api/openloop/updates/check reads version.txt
-// (the app's apiBase already includes /api/openloop).
+// 2026-08-20 ZYPPAR-STYLE UPDATES: /api/loopkeeper/updates/check reads
+// version.txt (the app's apiBase is /api/loopkeeper; /api/openloop/updates
+// still reaches this route through the alias middleware above).
 const updateRoutes = require('./routes/updates.routes.js');
 app.use('/api/rolodex/updates', updateRoutes);
 
@@ -642,23 +646,72 @@ app.get('/api/rolodex/link-preview', async (req, res) => {
  * When the counterparty does NOT have Rolodex, the appointment/message is
  * delivered through the channels they already use (WhatsApp / email / SMS /
  * X / copy-link). The share URL carries a short token; clicking it opens the
- * PWA, which fetches the invite and shows the landing card. The invite store
- * is a TTL in-memory map (48h) — production can move it to Mongo without
- * changing the API shape.
+ * PWA, which fetches the invite and shows the landing card.
+ * 2026-08-27 PERSISTENCE GAP CLOSED: the map is now mirrored to disk
+ * (data/invites.json) — a restart or crash no longer wipes pending invites.
+ * Disk failures fall back silently to memory-only (the old behavior).
  * ──────────────────────────────────────────────────────────────────────────── */
 const crypto = require('crypto');
+// fs + path are already required at the top of this file.
 const invites = new Map(); // token -> { from, room, kind, title, when, text, createdAt }
 const INVITE_TTL_MS = 48 * 3600_000;
+const INVITES_FILE = path.join(__dirname, '..', 'data', 'invites.json');
 
 function inviteToken() {
   return crypto.randomBytes(4).toString('hex');
 }
 
+// 2026-08-27 LOAD on boot — TTL-filtered, corrupt-file tolerant.
+try {
+  if (fs.existsSync(INVITES_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(INVITES_FILE, 'utf8'));
+    const now = Date.now();
+    let loaded = 0;
+    for (const [t, inv] of Object.entries(raw || {})) {
+      if (inv && typeof inv.createdAt === 'number' && now - inv.createdAt <= INVITE_TTL_MS) {
+        invites.set(t, inv);
+        loaded++;
+      }
+    }
+    console.log(`[invites] restored ${loaded} pending invite(s) from disk`);
+  }
+} catch (err) {
+  console.error('[invites] restore failed (memory-only):', err.message);
+}
+
+let invitesSaveTimer = null;
+function saveInvitesSoon() {
+  if (invitesSaveTimer) return; // already scheduled — debounce
+  invitesSaveTimer = setTimeout(() => {
+    invitesSaveTimer = null;
+    try {
+      fs.mkdirSync(path.dirname(INVITES_FILE), { recursive: true });
+      fs.writeFileSync(INVITES_FILE, JSON.stringify(Object.fromEntries(invites)), 'utf8');
+    } catch (err) {
+      console.error('[invites] save failed (continuing memory-only):', err.message);
+    }
+  }, 2000);
+  invitesSaveTimer.unref?.();
+}
+// Flush immediately on shutdown paths.
+for (const sig of ['SIGINT', 'SIGTERM', 'exit']) {
+  process.on(sig, () => {
+    try {
+      if (invites.size) {
+        fs.mkdirSync(path.dirname(INVITES_FILE), { recursive: true });
+        fs.writeFileSync(INVITES_FILE, JSON.stringify(Object.fromEntries(invites)), 'utf8');
+      }
+    } catch { /* best effort at exit */ }
+  });
+}
+
 setInterval(() => {
   const now = Date.now();
+  let expiredAny = false;
   for (const [t, inv] of invites) {
-    if (now - inv.createdAt > INVITE_TTL_MS) invites.delete(t);
+    if (now - inv.createdAt > INVITE_TTL_MS) { invites.delete(t); expiredAny = true; }
   }
+  if (expiredAny) saveInvitesSoon();
 }, 3600_000).unref();
 
 app.post('/api/rolodex/invites', (req, res) => {
@@ -666,7 +719,8 @@ app.post('/api/rolodex/invites', (req, res) => {
   if (!from || !room) return res.status(400).json({ error: 'from + room required' });
   const token = inviteToken();
   invites.set(token, { from: String(from).slice(0, 60), room: String(room).slice(0, 60), kind: kind === 'appointment' ? 'appointment' : 'message', title: String(title).slice(0, 120), when: String(when).slice(0, 32), text: String(text).slice(0, 600), createdAt: Date.now() });
-  res.json({ ok: true, token, url: 'https://zyppar.com/loopkeeper/?invite=' + token, ogUrl: 'https://zyppar.com/api/openloop/invites/' + token + '/og' });
+  saveInvitesSoon();
+  res.json({ ok: true, token, url: 'https://zyppar.com/loopkeeper/?invite=' + token, ogUrl: 'https://zyppar.com/api/loopkeeper/invites/' + token + '/og' });
 });
 
 app.get('/api/rolodex/invites/:token', (req, res) => {
@@ -684,6 +738,55 @@ app.get('/api/rolodex/invites/:token/og', (req, res) => {
   const inv = invites.get(token);
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(inviteOgPage(inv, token));
+});
+
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * 2026-08-27 CRASH INTAKE — the audit gap "no crash reporting" closed without
+ * an external vendor. The app's crash reporter batches window errors +
+ * unhandled rejections here; each event lands as one JSON line in
+ * data/crashes.jsonl (read via SSH: `tail data/crashes.jsonl`). Privacy-first:
+ * no raw IPs, no query strings (invite tokens never reach the log), every
+ * field length-capped, hard rate limit per client.
+ * ──────────────────────────────────────────────────────────────────────────── */
+const CRASHES_FILE = path.join(__dirname, '..', 'data', 'crashes.jsonl');
+const CRASH_SALT = crypto.randomBytes(16).toString('hex'); // per-process — hashes are not trackable across restarts
+const crashRateHits = new Map(); // ipHash -> [timestamps]
+function crashIpHash(ip) {
+  return crypto.createHash('sha1').update(CRASH_SALT + String(ip || '')).digest('hex').slice(0, 10);
+}
+const clampStr = (v, n) => String(v == null ? '' : v).slice(0, n);
+app.post('/api/rolodex/crashes', (req, res) => {
+  const ipHash = crashIpHash(req.socket?.remoteAddress);
+  const now = Date.now();
+  const hits = (crashRateHits.get(ipHash) || []).filter((t) => now - t < 60_000);
+  if (hits.length >= 5) return res.status(429).json({ error: 'slow down' });
+  hits.push(now);
+  crashRateHits.set(ipHash, hits);
+
+  const body = req.body && Array.isArray(req.body.events) ? req.body.events : [];
+  if (!body.length) return res.status(400).json({ error: 'events[] required' });
+  const events = body.slice(0, 20).map((e) => ({
+    receivedAt: new Date().toISOString(),
+    device: ipHash,
+    ts: Number(e.ts) || now,
+    type: e.type === 'unhandledrejection' ? 'unhandledrejection' : 'error',
+    msg: clampStr(e.msg, 500),
+    stack: clampStr(e.stack, 2000),
+    ver: clampStr(e.ver, 24),
+    plat: clampStr(e.plat, 12),
+    lang: clampStr(e.lang, 12),
+    page: clampStr(e.page, 120),
+    ua: clampStr(e.ua, 180),
+  }));
+  try {
+    fs.mkdirSync(path.dirname(CRASHES_FILE), { recursive: true });
+    fs.appendFileSync(CRASHES_FILE, events.map((e) => JSON.stringify(e)).join('\n') + '\n', 'utf8');
+    res.json({ ok: true, accepted: events.length });
+  } catch (err) {
+    console.error('[crashes] append failed:', err.message);
+    res.status(500).json({ error: 'persist failed' });
+  }
 });
 
 
@@ -1369,7 +1472,7 @@ function inviteOgPage(inv, token) {
     : `<div class="kicker">LoopKeeper</div>
        <div class="title">This invite has expired</div>
        <div class="dim">Ask your friend to send it again — or close the loop you keep meaning to close.</div>
-       <a class="btn" href="https://play.google.com/store/apps/details?id=com.zyppar.openloop">Get LoopKeeper</a>`;
+       <a class="btn" href="https://play.google.com/store/apps/details?id=com.zyppar.loopkeeper">Get LoopKeeper</a>`;
   return `<!DOCTYPE html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
