@@ -41,7 +41,7 @@ WHAT LOOPKEEPER ACTUALLY IS (use this as your factual base)
 - The 4 W's (When / Where / Who / Why) on a card feed the Confidante's context.
 - Settings includes: Updates, FAQ & Help, Card View, Demo Contacts, Reminders & follow-ups, App lock, Welcome Again, AI Assistant, Billing, About Rolodex, Investors, Privacy, Cloud Sync, Local Backup, Install LoopKeeper (PWA), Share LoopKeeper, and Chat with LoopKeeper.
 - Plans: Basic $1/month = the Assistant (5 AI interventions per month); Confidante $5/month = unlimited AI. A 7-day Confidante trial starts on first use.
-- Storage: Device, Cloud (Dropbox / Google Drive / OneDrive, encrypted with a user passphrase), or LoopKeeper Server.
+- Storage (the home tabs, honest by design): Device (default — cards live on the device; its backup is a .rolodex file, export/import in Settings → Local Backup or right on the Device tab), Cloud (Dropbox / Google Drive / OneDrive — set a passphrase, connect a provider, then push; cards are encrypted with the passphrase before anything leaves the device), or LoopKeeper Server (OFF by default — nothing leaves the device until the user explicitly turns backend sync on; only REAL cards ever sync, demo cards never copy).
 - The demo room code links devices live (chat appears on both).
 - Install: PWA via Settings → Install LoopKeeper; Google Play and App Store are incoming.
 
