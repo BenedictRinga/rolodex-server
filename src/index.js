@@ -1550,7 +1550,9 @@ io.on('connection', (socket) => {
     const room = socket.data.chatRoom;
     if (!room) return;
     const text = String(data?.text || '').slice(0, 500).trim();
-    if (!text) return;
+    // 2026-08-27 [object Object] GUARD: an old build emitting an object as text
+    // coerces to this literal — never relay it into other users' threads.
+    if (!text || text === '[object Object]') return;
     const payload = { room, name: socket.data.chatName || 'Someone', text, ts: Date.now() };
     socket.to('room:' + room).emit('chat:message', payload);
     socket.emit('chat:ack', { ts: payload.ts });
