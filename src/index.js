@@ -1206,7 +1206,10 @@ app.post('/api/rolodex/tester/accept', async (req, res) => {
 app.get('/api/rolodex/tester/roster', async (req, res) => {
   try {
     const key = String(req.query.key || '');
-    const expected = String(process.env.TESTER_ADMIN_KEY || '');
+    // 2026-08-28 FIX: must go through envVar() like every other secret —
+    // process.env alone never sees the repo .env file (no dotenv), so the
+    // founder's TESTER_ADMIN_KEY=... line was silently ignored (401 forever).
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
     if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
     const [accepts, days, feedbacks] = await Promise.all([
       TesterAccept.find({}).lean(),
