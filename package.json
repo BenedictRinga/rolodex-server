@@ -1,7 +1,7 @@
 {
   "name": "rolodex-server",
   "version": "0.3.1",
-  "build": 35,
+  "build": 36,
   "private": true,
   "description": "Rolodex sync backend — a fresh `rolodex` database, minimal sync API + a live 'peek' view for investors. YARN ONLY (no npm).",
   "scripts": {

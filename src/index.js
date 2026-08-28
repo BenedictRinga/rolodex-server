@@ -104,12 +104,48 @@ const InvestorRequest = conn.model('InvestorRequest', new mongoose.Schema({
 
 // 2026-08-19 CHAT WITH ROLODEXAI — user suggestions delivered to the investors'
 // extended room (the -x2 password space). The summary is the gleaned direction.
+// 2026-08-28 CLOSED BETA: optional numeric testerId (the invite code) so the
+// founder can see WHICH tester sent feedback — still no name/phone/email.
 const InvestorFeedback = conn.model('InvestorFeedback', new mongoose.Schema({
   deviceId: { type: String, default: '' },
   deviceName: { type: String, default: '' },
   messages: { type: [String], default: [] },
   summary: { type: String, required: true },
+  testerId: { type: Number, default: null },
 }, { timestamps: true }));
+
+// 2026-08-28 CLOSED BETA (15 TESTERS) — anonymous acceptance + practice ledger.
+// A tester accepts via their personal deeplink (numeric code, zero PII: no
+// name, no phone, no email — the UA string is recorded only to spot weird
+// double-claims). The app then tags analytics events with the same numeric
+// code, so the founder dashboard can measure compliance (installed /
+// practicing / silent) without ever knowing who the tester is. Codes are the
+// only secret; a leaked code can be rotated by editing TESTER_CODES.
+const TESTER_CODES = [
+  480213, 507894, 615238, 729461, 834175,
+  950326, 163482, 278519, 381647, 495273,
+  526819, 649152, 763485, 817294, 936528,
+]; // slot N = index + 1
+
+const TesterAccept = conn.model('TesterAccept', new mongoose.Schema({
+  testerId: { type: Number, required: true, unique: true, index: true },
+  code: { type: Number, required: true },
+  ua: { type: String, default: '' },
+}, { timestamps: true }));
+
+const testerDaySchema = new mongoose.Schema({
+  testerId: { type: Number, required: true, index: true },
+  day: { type: String, required: true }, // YYYY-MM-DD (UTC)
+  launches: { type: Number, default: 0 },
+  captures: { type: Number, default: 0 },
+  sends: { type: Number, default: 0 },
+  closes: { type: Number, default: 0 },
+  videos: { type: Number, default: 0 },
+  confidante: { type: Number, default: 0 },
+  feedback: { type: Number, default: 0 },
+}, { timestamps: true });
+testerDaySchema.index({ testerId: 1, day: 1 }, { unique: true });
+const TesterDay = conn.model('TesterDay', testerDaySchema);
 
 // 2026-08-23 ANONYMOUS PRODUCT ANALYTICS — no contacts, no PII. The frontend
 // sends lightweight event names (app_launch, session_start/end, card_added,
@@ -1053,10 +1089,167 @@ app.post('/api/rolodex/analytics/events', async (req, res) => {
         ts: e?.ts ? new Date(e.ts) : new Date(),
       }))
       .filter((e) => e.event);
-    if (docs.length) await AnalyticsEvent.insertMany(docs);
+    if (docs.length) {
+      await AnalyticsEvent.insertMany(docs);
+      // 2026-08-28 TESTER PRACTICE LEDGER: events carrying a numeric testerId
+      // (a closed-beta invite code) are rolled up per day. Numbers only.
+      await rollupTesterDays(docs);
+    }
     res.json({ ok: true, accepted: docs.length });
   } catch (err) {
     res.status(500).json({ error: 'analytics ingest failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-28 TESTER PRACTICE LEDGER — roll numeric-testerId events into a
+// per-day ledger so the founder dashboard can show streaks and compliance
+// without ever holding PII. The app sends the invite CODE (6 digits); the
+// ledger keys on the slot (1-15).
+async function rollupTesterDays(docs) {
+  try {
+    const perDay = new Map();
+    for (const e of docs) {
+      const code = Number(e.props?.testerId);
+      const slot = TESTER_CODES.indexOf(code);
+      if (slot < 0) continue;
+      const testerId = slot + 1;
+      const day = new Date(e.ts).toISOString().slice(0, 10);
+      const key = testerId + '|' + day;
+      const row = perDay.get(key) || { testerId, day, launches: 0, captures: 0, sends: 0, closes: 0, videos: 0, confidante: 0, feedback: 0 };
+      if (e.event === 'app_launch') row.launches++;
+      else if (e.event === 'loop_captured') row.captures++;
+      else if (e.event === 'message_sent') row.sends++;
+      else if (e.event === 'loop_closed') row.closes++;
+      else if (e.event === 'video_clip_sent') row.videos++;
+      else if (e.event === 'confidante_message') row.confidante++;
+      else if (e.event === 'feedback_sent') row.feedback++;
+      perDay.set(key, row);
+    }
+    for (const row of perDay.values()) {
+      const { testerId, day, ...inc } = row;
+      await TesterDay.findOneAndUpdate({ testerId, day }, { $inc: inc }, { upsert: true });
+    }
+  } catch (err) {
+    console.error('[tester rollup]', err.message);
+  }
+}
+
+// 2026-08-28 TESTER DEEPLINK ACCEPT — POST { code } from tester.html.
+// First accept claims the slot; later accepts are idempotent (they re-return
+// the original acceptedAt so a re-clicked link never resets anything).
+app.post('/api/rolodex/tester/accept', async (req, res) => {
+  try {
+    const code = Number(req.body?.code);
+    const slot = TESTER_CODES.indexOf(code);
+    if (!code || slot < 0) return res.status(404).json({ error: 'unknown code' });
+    const testerId = slot + 1;
+    const existing = await TesterAccept.findOne({ testerId }).lean();
+    if (existing) {
+      return res.json({ ok: true, testerId, acceptedAt: existing.createdAt, alreadyAccepted: true });
+    }
+    const doc = await TesterAccept.create({
+      testerId,
+      code,
+      ua: String(req.headers['user-agent'] || '').slice(0, 200),
+    });
+    res.json({ ok: true, testerId, acceptedAt: doc.createdAt });
+  } catch (err) {
+    console.error('[rolodex/tester/accept]', err.message);
+    res.status(500).json({ error: 'accept failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-28 TESTER ROSTER (FOUNDER ONLY) — who accepted, who installed, who
+// is practicing the 15-min/day habit, who went silent. Guarded by the
+// TESTER_ADMIN_KEY env; if the env is not set the roster is disabled entirely
+// (no accidental public exposure).
+app.get('/api/rolodex/tester/roster', async (req, res) => {
+  try {
+    const key = String(req.query.key || '');
+    const expected = String(process.env.TESTER_ADMIN_KEY || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const [accepts, days, feedbacks] = await Promise.all([
+      TesterAccept.find({}).lean(),
+      TesterDay.find({}).lean(),
+      InvestorFeedback.find({}, 'testerId createdAt').lean(),
+    ]);
+    const acceptMap = new Map(accepts.map((a) => [a.testerId, a]));
+    const dayMap = new Map();
+    for (const d of days) {
+      const list = dayMap.get(d.testerId) || [];
+      list.push(d);
+      dayMap.set(d.testerId, list);
+    }
+    const fbCount = new Map();
+    for (const f of feedbacks) {
+      if (!f.testerId) continue;
+      fbCount.set(f.testerId, (fbCount.get(f.testerId) || 0) + 1);
+    }
+    const dayMs = (s) => new Date(s + 'T00:00:00Z').getTime();
+    const todayMs = dayMs(new Date().toISOString().slice(0, 10));
+    const testers = TESTER_CODES.map((code, i) => {
+      const slot = i + 1;
+      const acc = acceptMap.get(slot);
+      const list = (dayMap.get(slot) || []).sort((a, b) => (a.day < b.day ? -1 : 1));
+      const totals = list.reduce((t, d) => ({
+        launches: t.launches + (d.launches || 0),
+        captures: t.captures + (d.captures || 0),
+        sends: t.sends + (d.sends || 0),
+        closes: t.closes + (d.closes || 0),
+        videos: t.videos + (d.videos || 0),
+        confidante: t.confidante + (d.confidante || 0),
+        feedback: t.feedback + (d.feedback || 0),
+      }), { launches: 0, captures: 0, sends: 0, closes: 0, videos: 0, confidante: 0, feedback: 0 });
+      // Last 14 days grid (Play-gate proxy window), oldest → newest.
+      const grid = [];
+      for (let k = 13; k >= 0; k--) {
+        const day = new Date(todayMs - k * 86400_000).toISOString().slice(0, 10);
+        const row = list.find((d) => d.day === day);
+        const practiced = !!row && ((row.captures || 0) + (row.sends || 0) + (row.closes || 0)) > 0;
+        grid.push({ day, active: !!row, practiced });
+      }
+      const allPracticeDays = list.filter((d) => ((d.captures || 0) + (d.sends || 0) + (d.closes || 0)) > 0).length;
+      const last = list.length ? list[list.length - 1] : null;
+      const daysSinceLastSeen = last ? Math.round((todayMs - dayMs(last.day)) / 86400_000) : null;
+      let status = 'awaiting';
+      if (acc && last) status = allPracticeDays > 0 ? 'practicing' : 'installed';
+      else if (acc) status = 'accepted';
+      // Nudges: the moments the founder promised to catch — never installed
+      // within 48h of accepting, or silent for 3+ days.
+      let nudge = null;
+      if (acc && !last && acc.createdAt && (Date.now() - new Date(acc.createdAt).getTime()) > 48 * 3600_000) nudge = 'install';
+      else if (last && (daysSinceLastSeen || 0) >= 3) nudge = 'checkin';
+      return {
+        slot,
+        code,
+        status,
+        nudge,
+        acceptedAt: acc?.createdAt || null,
+        firstSeenDay: list.length ? list[0].day : null,
+        lastSeenDay: last?.day || null,
+        daysSinceLastSeen,
+        activeDays: list.length,
+        practiceDays: allPracticeDays,
+        feedbackNotes: fbCount.get(slot) || 0,
+        totals,
+        grid,
+      };
+    });
+    const claimed = testers.filter((t) => t.acceptedAt).length;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      generatedAt: new Date().toISOString(),
+      summary: {
+        claimed,
+        installed: testers.filter((t) => t.status === 'installed' || t.status === 'practicing').length,
+        practicing: testers.filter((t) => t.status === 'practicing').length,
+        nudges: testers.filter((t) => t.nudge).length,
+      },
+      testers,
+    });
+  } catch (err) {
+    console.error('[rolodex/tester/roster]', err.message);
+    res.status(500).json({ error: 'roster failed: ' + (err?.message || 'unknown') });
   }
 });
 
@@ -1349,11 +1542,16 @@ app.post('/api/rolodex/feedback', async (req, res) => {
     const cleanMessages = []; // raw messages are never stored
     const cleanSummary = String(summary || '').trim().slice(0, 3000);
     if (!cleanSummary) return res.status(400).json({ error: 'summary required' });
+    // 2026-08-28 CLOSED BETA: optional numeric testerId (invite code) so the
+    // founder knows which tester's direction this is — never an identity.
+    let testerId = Number(req.body?.testerId);
+    if (!TESTER_CODES.includes(testerId)) testerId = null;
     await InvestorFeedback.create({
       deviceId: String(deviceId || '').slice(0, 80),
       deviceName: String(deviceName || '').slice(0, 80),
       messages: cleanMessages,
       summary: cleanSummary,
+      testerId,
     });
     res.json({ ok: true });
   } catch (err) {
