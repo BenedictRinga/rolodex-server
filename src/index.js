@@ -125,6 +125,13 @@ const TESTER_CODES = [
   480213, 507894, 615238, 729461, 834175,
   950326, 163482, 278519, 381647, 495273,
   526819, 649152, 763485, 817294, 936528,
+  // 2026-08-28 COHORT 15 -> 20 (founder): a code is a PERMANENT slot (accept
+  // claims testerId = index+1 and the practice ledger keys on it), so a passed
+  // invitee's code can never be safely reissued — the replacement and the
+  // original would share one ledger column. Five spare codes absorb passes
+  // instead: no expiry to communicate, no reuse, no collision. Existing
+  // codes/links stay exactly as they are; slots 16-20 are pure additions.
+  204817, 316529, 427638, 538741, 658274,
 ]; // slot N = index + 1
 
 const TesterAccept = conn.model('TesterAccept', new mongoose.Schema({
