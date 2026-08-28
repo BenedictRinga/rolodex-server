@@ -479,6 +479,35 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
       if (!draft) return res.status(502).json({ error: 'Grok empty reply' });
       return res.json({ draft });
     }
+    // 2026-08-28 GLM ENGINE (build 37): Z.AI's GLM through the founder's
+    // OpenRouter key (env OPENROUTER_API_KEY, model overridable via
+    // OPENROUTER_MODEL). Same transient-briefing privacy as the other engines.
+    if (engine === 'glm') {
+      if (!envVar('OPENROUTER_API_KEY')) return res.status(501).json({ error: 'OpenRouter key not configured on the LoopKeeper server' });
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + envVar('OPENROUTER_API_KEY'),
+          'HTTP-Referer': 'https://zyppar.com',
+          'X-Title': 'LoopKeeper',
+        },
+        body: JSON.stringify({
+          model: envVar('OPENROUTER_MODEL') || 'z-ai/glm-5.3-flash',
+          messages: [
+            { role: 'system', content: 'You are LoopKeeper, a confidential secretary. You proffer messages; the user hits Send. Keep it warm, human, one paragraph, in the user\'s voice.' },
+            { role: 'user', content: briefing },
+          ],
+          max_tokens: 220,
+          temperature: 0.7,
+        }),
+      });
+      if (!r.ok) return res.status(502).json({ error: 'GLM upstream ' + r.status });
+      const data = await r.json();
+      const draft = data?.choices?.[0]?.message?.content?.trim();
+      if (!draft) return res.status(502).json({ error: 'GLM empty reply' });
+      return res.json({ draft });
+    }
     return res.status(400).json({ error: 'Unknown engine' });
   } catch (e) {
     res.status(500).json({ error: 'AI compose failed: ' + (e?.message || 'unknown') });
@@ -536,11 +565,20 @@ app.post('/api/rolodex/chat', async (req, res) => {
 
     let reply = '';
     let usedEngine = '';
+    // 2026-08-28 GLM (build 37): a requested engine is tried first, then the
+    // ladder walks DeepSeek → GLM → Grok so a single configured key keeps the
+    // Confidante alive.
+    if (engine === 'glm' && envVar('OPENROUTER_API_KEY')) {
+      try { reply = await call(envVar('OPENROUTER_API_KEY'), 'https://openrouter.ai/api/v1/chat/completions', envVar('OPENROUTER_MODEL') || 'z-ai/glm-5.3-flash'); usedEngine = 'glm'; } catch { /* try next */ }
+    }
     if (engine === 'grok' && envVar('GROK_API_KEY')) {
       try { reply = await call(envVar('GROK_API_KEY'), 'https://api.x.ai/v1/chat/completions', 'grok-2-latest'); usedEngine = 'grok'; } catch { /* try next */ }
     }
     if (!reply && envVar('DEEPSEEK_API_KEY')) {
       try { reply = await call(envVar('DEEPSEEK_API_KEY'), 'https://api.deepseek.com/chat/completions', 'deepseek-chat'); usedEngine = 'deepseek'; } catch { /* try next */ }
+    }
+    if (!reply && engine !== 'glm' && envVar('OPENROUTER_API_KEY')) {
+      try { reply = await call(envVar('OPENROUTER_API_KEY'), 'https://openrouter.ai/api/v1/chat/completions', envVar('OPENROUTER_MODEL') || 'z-ai/glm-5.3-flash'); usedEngine = 'glm'; } catch { /* fallback */ }
     }
     if (!reply && engine !== 'grok' && envVar('GROK_API_KEY')) {
       try { reply = await call(envVar('GROK_API_KEY'), 'https://api.x.ai/v1/chat/completions', 'grok-2-latest'); usedEngine = 'grok'; } catch { /* fallback */ }
@@ -583,6 +621,7 @@ app.get('/api/rolodex/agent/status', (_req, res) => {
     engines: {
       deepseek: !!envVar('DEEPSEEK_API_KEY'),
       grok: !!envVar('GROK_API_KEY'),
+      glm: !!envVar('OPENROUTER_API_KEY'),
     },
   });
 });
@@ -868,13 +907,14 @@ app.post('/api/rolodex/investor-requests', async (req, res) => {
 
 // The app talks to the DB here — the demo's "it communicates" moment.
 // 2026-08-18 AI STATUS: lets the app show a live green light + which engine
-// the server can actually deliver (DeepSeek/Grok keys configured or not).
+// the server can actually deliver (DeepSeek/Grok/GLM keys configured or not).
 app.get('/api/rolodex/ai/status', (_req, res) => {
   res.json({
     ok: true,
     onDevice: true, // the on-device engine always works, even offline
     deepseekConfigured: !!envVar('DEEPSEEK_API_KEY'),
     grokConfigured: !!envVar('GROK_API_KEY'),
+    glmConfigured: !!envVar('OPENROUTER_API_KEY'),
     ttsConfigured: studioTts.configured(),
   });
 });
