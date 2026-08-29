@@ -1542,6 +1542,20 @@ async function computeAnalyticsSummary() {
     { $limit: 12 },
   ]);
 
+  // 2026-08-29 BUILD 144 (founder #3): a DEDICATED investors-portal line for
+  // invite failures. The invitee taps "Something didn't work?" on the landing
+  // (app build 142) and the anonymous invite_issue event lands here — the
+  // funnel's leak, on its own line, not buried in topEvents.
+  const [inviteIssues24h, inviteIssues7d, inviteIssues30d] = await Promise.all([
+    AnalyticsEvent.countDocuments({ event: 'invite_issue', ts: { $gte: dayAgo } }),
+    AnalyticsEvent.countDocuments({ event: 'invite_issue', ts: { $gte: weekAgo } }),
+    AnalyticsEvent.countDocuments({ event: 'invite_issue', ts: { $gte: monthAgo } }),
+  ]);
+  const inviteIssueKinds = await AnalyticsEvent.aggregate([
+    { $match: { event: 'invite_issue', ts: { $gte: monthAgo } } },
+    { $group: { _id: '$props.kind', count: { $sum: 1 } } },
+  ]);
+
   return {
     dau: dau.length,
     wau: wau.length,
@@ -1552,6 +1566,12 @@ async function computeAnalyticsSummary() {
     activation,
     retention,
     topEvents,
+    inviteIssues: {
+      last24h: inviteIssues24h,
+      last7d: inviteIssues7d,
+      last30d: inviteIssues30d,
+      kinds: inviteIssueKinds.map((k) => ({ kind: k._id || 'unspecified', count: k.count })),
+    },
   };
 }
 
