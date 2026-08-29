@@ -1556,6 +1556,58 @@ async function computeAnalyticsSummary() {
     { $group: { _id: '$props.kind', count: { $sum: 1 } } },
   ]);
 
+  // 2026-08-29 BUILD 149 (founder: "what part of the world, languages,
+  // culture, do they switch languages?"). The app (build 149) stamps every
+  // app_launch with coarse categorical locale props — tz (IANA zone, the
+  // no-IP geography proxy), tzRegion, deviceLang, appLang — and every
+  // deliberate language switch with lang_switched. Aggregate only; nothing
+  // identifying, nothing per-user.
+  const [topTimezones, topRegions, topAppLangs, topDeviceLangs, langSwitches30d, langSwitchTargets] = await Promise.all([
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'app_launch', 'props.tz': { $exists: true, $ne: '' }, ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.tz', devices: { $addToSet: '$deviceId' }, count: { $sum: 1 } } },
+      { $project: { _id: 1, count: 1, devices: { $size: '$devices' } } },
+      { $sort: { devices: -1, count: -1 } },
+      { $limit: 8 },
+    ]),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'app_launch', 'props.tzRegion': { $exists: true, $ne: '' }, ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.tzRegion', devices: { $addToSet: '$deviceId' }, count: { $sum: 1 } } },
+      { $project: { _id: 1, count: 1, devices: { $size: '$devices' } } },
+      { $sort: { devices: -1, count: -1 } },
+      { $limit: 8 },
+    ]),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'app_launch', 'props.appLang': { $exists: true, $ne: '' }, ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.appLang', devices: { $addToSet: '$deviceId' }, count: { $sum: 1 } } },
+      { $project: { _id: 1, count: 1, devices: { $size: '$devices' } } },
+      { $sort: { devices: -1, count: -1 } },
+      { $limit: 10 },
+    ]),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'app_launch', 'props.deviceLang': { $exists: true, $ne: '' }, ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.deviceLang', devices: { $addToSet: '$deviceId' }, count: { $sum: 1 } } },
+      { $project: { _id: 1, count: 1, devices: { $size: '$devices' } } },
+      { $sort: { devices: -1, count: -1 } },
+      { $limit: 10 },
+    ]),
+    AnalyticsEvent.countDocuments({ event: 'lang_switched', ts: { $gte: monthAgo } }),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'lang_switched', ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.to', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+    ]),
+  ]);
+  const locales = {
+    topTimezones: topTimezones.map((t) => ({ tz: t._id || 'unknown', devices: t.devices, launches: t.count })),
+    topRegions: topRegions.map((t) => ({ region: t._id || 'unknown', devices: t.devices, launches: t.count })),
+    appLanguages: topAppLangs.map((t) => ({ lang: t._id || 'unknown', devices: t.devices, launches: t.count })),
+    deviceLanguages: topDeviceLangs.map((t) => ({ lang: t._id || 'unknown', devices: t.devices, launches: t.count })),
+    langSwitches30d,
+    langSwitchTargets: langSwitchTargets.map((t) => ({ lang: t._id || 'unknown', count: t.count })),
+  };
+
   return {
     dau: dau.length,
     wau: wau.length,
@@ -1572,6 +1624,7 @@ async function computeAnalyticsSummary() {
       last30d: inviteIssues30d,
       kinds: inviteIssueKinds.map((k) => ({ kind: k._id || 'unspecified', count: k.count })),
     },
+    locales, // 2026-08-29 BUILD 149: where in the world / which language / do they switch
   };
 }
 
