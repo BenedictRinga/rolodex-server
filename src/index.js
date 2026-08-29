@@ -1608,6 +1608,56 @@ async function computeAnalyticsSummary() {
     langSwitchTargets: langSwitchTargets.map((t) => ({ lang: t._id || 'unknown', count: t.count })),
   };
 
+  // 2026-08-29 BUILD 152 (founder: "a record of how often users are sending out
+  // messages or sharing the app… how soon after invite, new users respond"):
+  // shares by voice/channel + the invite funnel timed by the 48h token.
+  const [shareByVoice, shareByChannel, funnelRaw] = await Promise.all([
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'app_shared', ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.voice', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'app_shared', ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.channel', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 12 },
+    ]),
+    AnalyticsEvent.aggregate([
+      { $match: { event: { $in: ['invite_created', 'invite_landed', 'invite_accepted'] }, ts: { $gte: monthAgo } } },
+      { $project: { event: 1, token: '$props.token', voice: '$props.voice', ts: 1 } },
+      { $match: { token: { $exists: true, $ne: null } } },
+      { $sort: { ts: 1 } },
+      { $group: { _id: '$token', events: { $push: { event: '$event', voice: '$voice', ts: '$ts' } } } },
+    ]),
+  ]);
+  let invites30d = 0, landed30d = 0, accepted30d = 0;
+  const hoursToLand = [], hoursToAccept = [];
+  const funnelByVoice = {}; // BUILD 152: voice -> { invites, landed, accepted }
+  for (const doc of funnelRaw) {
+    const first = doc.events?.[0] || {};
+    if (first.event !== 'invite_created') continue; // only funnels we saw being born
+    invites30d += 1;
+    const voice = first.voice || 'unknown';
+    if (!funnelByVoice[voice]) funnelByVoice[voice] = { invites: 0, landed: 0, accepted: 0 };
+    funnelByVoice[voice].invites += 1;
+    const createdTs = new Date(first.ts).getTime();
+    const land = (doc.events || []).find((e) => e.event === 'invite_landed');
+    const accept = (doc.events || []).find((e) => e.event === 'invite_accepted');
+    if (land) {
+      landed30d += 1;
+      funnelByVoice[voice].landed += 1;
+      hoursToLand.push(Math.max(0, (new Date(land.ts).getTime() - createdTs) / 3600000));
+    }
+    if (accept) {
+      accepted30d += 1;
+      funnelByVoice[voice].accepted += 1;
+      hoursToAccept.push(Math.max(0, (new Date(accept.ts).getTime() - createdTs) / 3600000));
+    }
+  }
+  const median = (arr) => (arr.length ? arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)] : null);
+  const sharesTotal = shareByVoice.reduce((a, b) => a + b.count, 0);
+
   return {
     dau: dau.length,
     wau: wau.length,
@@ -1623,6 +1673,21 @@ async function computeAnalyticsSummary() {
       last7d: inviteIssues7d,
       last30d: inviteIssues30d,
       kinds: inviteIssueKinds.map((k) => ({ kind: k._id || 'unspecified', count: k.count })),
+    },
+    // 2026-08-29 BUILD 152: what people send out and share — and the invite
+    // funnel timed created → landed → accepted by the ephemeral token.
+    shares: {
+      total30d: sharesTotal,
+      byVoice: shareByVoice.map((v) => ({ voice: v._id || 'auto', count: v.count })),
+      byChannel: shareByChannel.map((v) => ({ channel: v._id || 'unknown', count: v.count })),
+      funnelByVoice: Object.entries(funnelByVoice).map(([voice, f]) => ({ voice, ...f })),
+    },
+    inviteFunnel: {
+      invites30d,
+      landed30d,
+      accepted30d,
+      medianHoursToLand: median(hoursToLand),
+      medianHoursToAccept: median(hoursToAccept),
     },
     locales, // 2026-08-29 BUILD 149: where in the world / which language / do they switch
   };
