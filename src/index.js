@@ -772,6 +772,29 @@ try {
   console.error('[invites] restore failed (memory-only):', err.message);
 }
 
+// 2026-08-30 BUILD 47 (founder: "absolute integrity, no noise"): the OWN-FLEET
+// noise list — deviceIds the founder designates (own dev browsers, test rigs).
+// They are REAL devices, but they are not the market, so the Investors portal
+// keeps them out of the top line and shows them as their own line instead.
+// File-backed like invites; env LK_NOISE_DEVICES (comma-separated) rides too.
+const NOISE_FILE = path.join(__dirname, '..', 'data', 'noise-devices.json');
+const noiseDevices = new Set();
+try {
+  if (fs.existsSync(NOISE_FILE)) {
+    const raw = JSON.parse(fs.readFileSync(NOISE_FILE, 'utf8'));
+    if (Array.isArray(raw)) for (const id of raw) if (id) noiseDevices.add(String(id));
+  }
+  console.log(`[noise] own-fleet list loaded: ${noiseDevices.size} device(s)`);
+} catch (err) {
+  console.error('[noise] load failed (memory-only):', err.message);
+}
+function saveNoiseDevices() {
+  try {
+    fs.mkdirSync(path.dirname(NOISE_FILE), { recursive: true });
+    fs.writeFileSync(NOISE_FILE, JSON.stringify([...noiseDevices], null, 2), 'utf8');
+  } catch { /* best effort */ }
+}
+
 let invitesSaveTimer = null;
 function saveInvitesSoon() {
   if (invitesSaveTimer) return; // already scheduled — debounce
@@ -1122,11 +1145,26 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
 // The investor portal now reports real presence/frequency/time/retention from
 // lightweight events. No contacts, no PII — only deviceId + event names.
 
+// 2026-08-30 BUILD 47 (founder: "absolute integrity"): per-device hourly
+// throttle — a runaway or malicious client cannot flood the ledger. In-memory
+// (resets on restart is fine; it is a valve, not an accounting record).
+const INGEST_HOURLY_CAP = 2000;
+const ingestBuckets = new Map(); // deviceId -> { hour, count }
+
 app.post('/api/rolodex/analytics/events', async (req, res) => {
   try {
     const deviceId = String(req.body?.deviceId || '').slice(0, 80);
     const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 100) : [];
     if (!deviceId || !events.length) return res.status(400).json({ error: 'deviceId + events required' });
+    const hour = Math.floor(Date.now() / 3600_000);
+    let bucket = ingestBuckets.get(deviceId);
+    if (!bucket || bucket.hour !== hour) {
+      if (ingestBuckets.size > 5000) for (const [k, v] of ingestBuckets) if (v.hour !== hour) ingestBuckets.delete(k);
+      bucket = { hour, count: 0 };
+      ingestBuckets.set(deviceId, bucket);
+    }
+    bucket.count += events.length;
+    if (bucket.count > INGEST_HOURLY_CAP) return res.status(429).json({ error: 'too many events this hour' });
     const docs = events
       .map((e) => ({
         deviceId,
@@ -1137,12 +1175,30 @@ app.post('/api/rolodex/analytics/events', async (req, res) => {
       }))
       .filter((e) => e.event);
     if (docs.length) {
-      await AnalyticsEvent.insertMany(docs);
-      // 2026-08-28 TESTER PRACTICE LEDGER: events carrying a numeric testerId
-      // (a closed-beta invite code) are rolled up per day. Numbers only.
-      await rollupTesterDays(docs);
+      // 2026-08-30 BUILD 47 IDEMPOTENT INGEST: the event's own coordinates
+      // (device | event | session | ts | props) hash to a deterministic _id,
+      // so the app's offline retry queue can replay the same batch forever
+      // without ever double-counting. Only genuinely new rows are inserted
+      // (and rolled up); replays answer with the duplicate count instead.
+      for (const d of docs) {
+        d._id = crypto.createHash('sha1')
+          .update(`${d.deviceId}|${d.event}|${d.sessionId}|${d.ts.toISOString()}|${JSON.stringify(d.props)}`)
+          .digest('hex');
+      }
+      const ids = new Set(docs.map((d) => d._id));
+      const existing = await AnalyticsEvent.find({ _id: { $in: [...ids] } }).select('_id').lean();
+      const seen = new Set(existing.map((e) => String(e._id)));
+      const fresh = docs.filter((d) => !seen.has(d._id));
+      if (fresh.length) {
+        await AnalyticsEvent.insertMany(fresh);
+        // 2026-08-28 TESTER PRACTICE LEDGER: events carrying a numeric testerId
+        // (a closed-beta invite code) are rolled up per day. Numbers only.
+        await rollupTesterDays(fresh);
+      }
+      res.json({ ok: true, accepted: fresh.length, duplicates: docs.length - fresh.length });
+      return;
     }
-    res.json({ ok: true, accepted: docs.length });
+    res.json({ ok: true, accepted: 0 });
   } catch (err) {
     res.status(500).json({ error: 'analytics ingest failed: ' + (err?.message || 'unknown') });
   }
@@ -1300,6 +1356,52 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
   } catch (err) {
     console.error('[rolodex/tester/roster]', err.message);
     res.status(500).json({ error: 'roster failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// 2026-08-30 BUILD 47 OWN-FLEET ADMIN — same TESTER_ADMIN_KEY gate as the
+// roster. The founder lists deviceIds that are NOT the market (dev browsers,
+// test rigs, beta rigs): GET reads the list (with a 30d-activity count per
+// device so the founder can see what each entry actually was), POST adds or
+// removes entries. data/noise-devices.json persists it across restarts.
+app.get('/api/rolodex/tester/noise-devices', async (req, res) => {
+  try {
+    const key = String(req.query?.key || '');
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const monthAgo = new Date(Date.now() - 30 * 24 * 3600_000);
+    const counts = await AnalyticsEvent.aggregate([
+      { $match: { deviceId: { $in: [...noiseDevices] }, ts: { $gte: monthAgo } } },
+      { $group: { _id: '$deviceId', events30d: { $sum: 1 }, lastTs: { $max: '$ts' } } },
+      { $sort: { events30d: -1 } },
+    ]);
+    res.json({
+      ok: true,
+      devices: [...noiseDevices].map((id) => {
+        const row = counts.find((c) => c._id === id);
+        return { id, events30d: row?.events30d || 0, lastTs: row?.lastTs || null };
+      }),
+    });
+  } catch (err) {
+    console.error('[rolodex/noise-devices GET]', err.message);
+    res.status(500).json({ error: 'noise list failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+app.post('/api/rolodex/tester/noise-devices', async (req, res) => {
+  try {
+    const key = String(req.body?.key || '');
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const add = Array.isArray(req.body?.add) ? req.body.add.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
+    const remove = Array.isArray(req.body?.remove) ? req.body.remove.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
+    for (const id of add) noiseDevices.add(id);
+    for (const id of remove) noiseDevices.delete(id);
+    saveNoiseDevices();
+    res.json({ ok: true, added: add.length, removed: remove.length, devices: [...noiseDevices] });
+  } catch (err) {
+    console.error('[rolodex/noise-devices POST]', err.message);
+    res.status(500).json({ error: 'noise list failed: ' + (err?.message || 'unknown') });
   }
 });
 
@@ -1476,29 +1578,55 @@ async function computeAnalyticsSummary() {
   const weekAgo = new Date(now - 7 * d);
   const monthAgo = new Date(now - 30 * d);
 
-  const [dau, wau, mau] = await Promise.all([
+  const [dauAll, wauAll, mauAll] = await Promise.all([
     analyticsDistinctDevices(dayAgo),
     analyticsDistinctDevices(weekAgo),
     analyticsDistinctDevices(monthAgo),
   ]);
 
-  const sessions24h = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: dayAgo } });
-  const sessions7d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: weekAgo } });
-  const sessions30d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: monthAgo } });
+  // 2026-08-30 BUILD 47 (founder: "absolute integrity, no noise"): the
+  // OWN-FLEET noise set — every device that ever carried a numeric testerId
+  // (all-time), the founder-maintained noise-devices list, and LK_NOISE_DEVICES
+  // env. They are REAL devices, but they are not the market: the top line
+  // reports ORGANIC only, and the fleet is shown as its own line (ownFleet).
+  const noise = new Set(String(envVar('LK_NOISE_DEVICES') || '').split(',').map((s) => s.trim()).filter(Boolean));
+  for (const id of noiseDevices) noise.add(id);
+  try {
+    const testerRows = await AnalyticsEvent.aggregate([
+      { $match: { 'props.testerId': { $type: 'number', $gt: 0 } } },
+      { $group: { _id: '$deviceId' } },
+    ]);
+    for (const r of testerRows) if (r._id) noise.add(String(r._id));
+  } catch { /* if the tester scan fails, the file/env lists still apply */ }
+  const noiseArr = [...noise];
+  const ownDau = dauAll.filter((x) => noise.has(x)).length;
+  const ownWau = wauAll.filter((x) => noise.has(x)).length;
+  const ownMau = mauAll.filter((x) => noise.has(x)).length;
+  const organic = (arr) => arr.filter((x) => !noise.has(x));
+  const dau = organic(dauAll);
+  const wau = organic(wauAll);
+  const mau = organic(mauAll);
+
+  const sessions24h = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: dayAgo }, deviceId: { $nin: noiseArr } });
+  const sessions7d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } });
+  const sessions30d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } });
 
   const [avgSession] = await AnalyticsEvent.aggregate([
-    { $match: { event: 'session_end', 'props.duration': { $gt: 0 }, ts: { $gte: monthAgo } } },
+    { $match: { event: 'session_end', 'props.duration': { $gt: 0 }, ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } } },
     { $group: { _id: null, avg: { $avg: '$props.duration' }, count: { $sum: 1 } } },
   ]);
 
-  // Activation: distinct devices that ever hit each milestone.
+  // Activation: distinct ORGANIC devices that ever hit each milestone.
   const activationEvents = ['card_added', 'followup_created', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
   const activation = {};
   for (const ev of activationEvents) {
-    activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev })).length;
+    activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev, deviceId: { $nin: noiseArr } })).length;
   }
 
-  // Retention cohorts: last 7 days, first app_launch per device, D1/D7 return.
+  // Retention cohorts: last 7 days, first app_launch per device — anchored
+  // SERVER-SIDE (a device wiping its storage mints a new deviceId and becomes
+  // a genuinely new cohort member; the server cannot be fooled), D1/D7
+  // return, own-fleet devices excluded.
   const firstSeen = await AnalyticsEvent.aggregate([
     { $match: { event: 'app_launch' } },
     { $group: { _id: '$deviceId', first: { $min: '$ts' } } },
@@ -1511,7 +1639,7 @@ async function computeAnalyticsSummary() {
     const devices = firstSeen
       .filter((f) => {
         const t = new Date(f.first).getTime();
-        return t >= start && t < end;
+        return t >= start && t < end && !noise.has(String(f._id));
       })
       .map((f) => f._id);
     if (!devices.length) {
@@ -1536,7 +1664,7 @@ async function computeAnalyticsSummary() {
   }
 
   const topEvents = await AnalyticsEvent.aggregate([
-    { $match: { ts: { $gte: weekAgo } } },
+    { $match: { ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } } },
     { $group: { _id: '$event', count: { $sum: 1 } } },
     { $sort: { count: -1 } },
     { $limit: 12 },
@@ -1659,9 +1787,12 @@ async function computeAnalyticsSummary() {
   const sharesTotal = shareByVoice.reduce((a, b) => a + b.count, 0);
 
   return {
+    // 2026-08-30 BUILD 47: the top line is ORGANIC — own-fleet (dev + tester)
+    // devices are counted separately in ownFleet, never mixed in.
     dau: dau.length,
     wau: wau.length,
     mau: mau.length,
+    ownFleet: { devices: noise.size, dau: ownDau, wau: ownWau, mau: ownMau },
     sessions: { last24h: sessions24h, last7d: sessions7d, last30d: sessions30d },
     avgSessionSeconds: Math.round(Number(avgSession?.avg) || 0),
     sessionsRecorded30d: avgSession?.count || 0,
