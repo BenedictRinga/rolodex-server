@@ -1617,7 +1617,10 @@ async function computeAnalyticsSummary() {
   ]);
 
   // Activation: distinct ORGANIC devices that ever hit each milestone.
-  const activationEvents = ['card_added', 'followup_created', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
+  // 2026-08-31 BUILD 50 (founder): device_list_started LEADS the table — the
+  // moment a real person's card is added (device pick, manual entry, invite
+  // accepted, walk confirm). The app fires it once ever per device.
+  const activationEvents = ['device_list_started', 'card_added', 'followup_created', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
   const activation = {};
   for (const ev of activationEvents) {
     activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev, deviceId: { $nin: noiseArr } })).length;
