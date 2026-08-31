@@ -140,6 +140,15 @@ const TesterAccept = conn.model('TesterAccept', new mongoose.Schema({
   ua: { type: String, default: '' },
 }, { timestamps: true }));
 
+// 2026-08-31 BUILD 54 (founder): the INVITE tracker — the dashboard's
+// invite-line Copy marks the code as handed out, so the roster can show an
+// "invited" rung between awaiting and accepted (the send itself happens in
+// WhatsApp etc., invisible to the system until now). Numeric slot only.
+const TesterInvite = conn.model('TesterInvite', new mongoose.Schema({
+  testerId: { type: Number, required: true, unique: true, index: true },
+  invitedAt: { type: Date, default: Date.now },
+}, { timestamps: true }));
+
 const testerDaySchema = new mongoose.Schema({
   testerId: { type: Number, required: true, index: true },
   day: { type: String, required: true }, // YYYY-MM-DD (UTC)
@@ -1262,6 +1271,32 @@ app.post('/api/rolodex/tester/accept', async (req, res) => {
   }
 });
 
+// 2026-08-31 BUILD 54 (founder): INVITE MARK — POST { code } from the
+// dashboard's invite-line Copy (TESTER_ADMIN_KEY gated, like the roster).
+// Records that the deeplink for this slot has been handed out. Idempotent:
+// re-copying is harmless (the original invitedAt wins, so the roster shows
+// the FIRST time the link went out).
+app.post('/api/rolodex/tester/invited', async (req, res) => {
+  try {
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
+    const key = String(req.body?.key || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const code = Number(req.body?.code);
+    const slot = TESTER_CODES.indexOf(code);
+    if (!code || slot < 0) return res.status(404).json({ error: 'unknown code' });
+    const testerId = slot + 1;
+    const existing = await TesterInvite.findOne({ testerId }).lean();
+    if (existing) {
+      return res.json({ ok: true, testerId, invitedAt: existing.invitedAt, alreadyInvited: true });
+    }
+    const doc = await TesterInvite.create({ testerId });
+    res.json({ ok: true, testerId, invitedAt: doc.invitedAt });
+  } catch (err) {
+    console.error('[rolodex/tester/invited]', err.message);
+    res.status(500).json({ error: 'invite mark failed: ' + (err?.message || 'unknown') });
+  }
+});
+
 // 2026-08-28 TESTER ROSTER (FOUNDER ONLY) — who accepted, who installed, who
 // is practicing the 15-min/day habit, who went silent. Guarded by the
 // TESTER_ADMIN_KEY env; if the env is not set the roster is disabled entirely
@@ -1274,12 +1309,14 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
     // founder's TESTER_ADMIN_KEY=... line was silently ignored (401 forever).
     const expected = String(envVar('TESTER_ADMIN_KEY') || '');
     if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
-    const [accepts, days, feedbacks] = await Promise.all([
+    const [accepts, days, feedbacks, invites] = await Promise.all([
       TesterAccept.find({}).lean(),
       TesterDay.find({}).lean(),
       InvestorFeedback.find({}, 'testerId createdAt').lean(),
+      TesterInvite.find({}).lean(), // 2026-08-31 BUILD 54: the invite marks
     ]);
     const acceptMap = new Map(accepts.map((a) => [a.testerId, a]));
+    const inviteMap = new Map(invites.map((v) => [v.testerId, v]));
     const dayMap = new Map();
     for (const d of days) {
       const list = dayMap.get(d.testerId) || [];
@@ -1318,8 +1355,13 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
       const last = list.length ? list[list.length - 1] : null;
       const daysSinceLastSeen = last ? Math.round((todayMs - dayMs(last.day)) / 86400_000) : null;
       let status = 'awaiting';
+      // 2026-08-31 BUILD 54: the INVITED rung — the link was copied/handed out
+      // (TesterInvite mark) but the slot is not yet claimed. Accepted beats
+      // invited beats awaiting; installed/practicing still lead the ladder.
+      const inv = inviteMap.get(slot);
       if (acc && last) status = allPracticeDays > 0 ? 'practicing' : 'installed';
       else if (acc) status = 'accepted';
+      else if (inv) status = 'invited';
       // Nudges: the moments the founder promised to catch — never installed
       // within 48h of accepting, or silent for 3+ days.
       let nudge = null;
@@ -1330,6 +1372,7 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
         code,
         status,
         nudge,
+        invitedAt: inv?.invitedAt || null,
         acceptedAt: acc?.createdAt || null,
         firstSeenDay: list.length ? list[0].day : null,
         lastSeenDay: last?.day || null,
@@ -1347,6 +1390,7 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
       generatedAt: new Date().toISOString(),
       summary: {
         claimed,
+        invited: testers.filter((t) => t.status === 'invited').length,
         installed: testers.filter((t) => t.status === 'installed' || t.status === 'practicing').length,
         practicing: testers.filter((t) => t.status === 'practicing').length,
         nudges: testers.filter((t) => t.nudge).length,
