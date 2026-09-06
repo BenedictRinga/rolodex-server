@@ -930,18 +930,35 @@ app.get('/api/rolodex/users/lookup', async (req, res) => {
   }
 });
 
-// 2026-08-18 THE INVESTOR GATE: a requesting investor leaves their details
-// and receives the access on the spot - the gate is the exclusivity mechanic.
+// 2026-08-18 THE INVESTOR GATE: a requesting investor leaves their details.
+// 2026-09-06 BUILD 60 (founder: "move it into Investors" - the portal must be
+// genuinely private): the request RECORDS the lead and nothing else. The word
+// is never dispensed here; the founder hands it to investors personally, and
+// the gate itself is verified server-side below (env INVESTOR_KEY /
+// INVESTOR_ROOM_KEY - unset keys keep the doors sealed).
 app.post('/api/rolodex/investor-requests', async (req, res) => {
   try {
     const { name = '', email = '', note = '' } = req.body || {};
     if (!String(email || '').trim()) return res.status(400).json({ error: 'email required' });
     await InvestorRequest.create({ name: String(name).slice(0, 80), email: String(email).trim().slice(0, 120), note: String(note).slice(0, 300) });
-    res.json({ ok: true, access: 'northstar' }); // dispensed on request
+    res.json({ ok: true }); // the request is recorded - the word travels person to person
   } catch (err) {
     console.error('[rolodex/investor-requests]', err.message);
     res.status(500).json({ error: 'request failed' });
   }
+});
+
+// 2026-09-06 BUILD 60: the investor gates, verified where a gate belongs.
+// scope 'portal' checks INVESTOR_KEY, scope 'room' checks INVESTOR_ROOM_KEY.
+// No key configured = door sealed (403), never open by accident.
+app.post('/api/rolodex/investor/verify', (req, res) => {
+  const scope = String(req.body?.scope || 'portal');
+  const expected = envVar(scope === 'room' ? 'INVESTOR_ROOM_KEY' : 'INVESTOR_KEY');
+  const pass = String(req.body?.pass || '');
+  if (!expected || !pass || pass.toLowerCase() !== String(expected).toLowerCase()) {
+    return res.status(403).json({ ok: false });
+  }
+  res.json({ ok: true });
 });
 
 // The app talks to the DB here — the demo's "it communicates" moment.
