@@ -149,6 +149,18 @@ const TesterInvite = conn.model('TesterInvite', new mongoose.Schema({
   invitedAt: { type: Date, default: Date.now },
 }, { timestamps: true }));
 
+// 2026-09-13 BUILD 67 (founder: the roster cannot tell "link never opened"
+// from "opened but not accepted"): the VISIT ledger. tester.html pings the
+// beacon endpoint the moment a deeplink opens — numeric code only, no name,
+// no phone, no email, no UA here. First visit wins createdAt (firstVisitAt);
+// re-visits only bump visits + lastVisitAt. One row per slot, ever.
+const TesterVisit = conn.model('TesterVisit', new mongoose.Schema({
+  testerId: { type: Number, required: true, unique: true, index: true },
+  code: { type: Number, required: true },
+  visits: { type: Number, default: 1 },
+  lastVisitAt: { type: Date, default: Date.now },
+}, { timestamps: true }));
+
 const testerDaySchema = new mongoose.Schema({
   testerId: { type: Number, required: true, index: true },
   day: { type: String, required: true }, // YYYY-MM-DD (UTC)
@@ -1206,15 +1218,22 @@ app.post('/api/rolodex/analytics/events', async (req, res) => {
       // so the app's offline retry queue can replay the same batch forever
       // without ever double-counting. Only genuinely new rows are inserted
       // (and rolled up); replays answer with the duplicate count instead.
+      // 2026-09-13 BUILD 67 REPAIR (founder: the investor portal has been
+      // blind since Aug 30): build 47 assigned the 40-char sha1 hex straight
+      // to _id, but the schema keeps the DEFAULT ObjectId — every insertMany
+      // cast-failed and EVERY analytics event from every device 500'd since
+      // the day this shipped. Fix: the first 24 hex of the same hash are
+      // deterministic, so they become a real ObjectId — idempotency survives
+      // intact, and the dedupe comparison runs on String(_id) on BOTH sides.
       for (const d of docs) {
-        d._id = crypto.createHash('sha1')
+        const hex = crypto.createHash('sha1')
           .update(`${d.deviceId}|${d.event}|${d.sessionId}|${d.ts.toISOString()}|${JSON.stringify(d.props)}`)
           .digest('hex');
+        d._id = new mongoose.Types.ObjectId(hex.slice(0, 24));
       }
-      const ids = new Set(docs.map((d) => d._id));
-      const existing = await AnalyticsEvent.find({ _id: { $in: [...ids] } }).select('_id').lean();
+      const existing = await AnalyticsEvent.find({ _id: { $in: docs.map((d) => d._id) } }).select('_id').lean();
       const seen = new Set(existing.map((e) => String(e._id)));
-      const fresh = docs.filter((d) => !seen.has(d._id));
+      const fresh = docs.filter((d) => !seen.has(String(d._id)));
       if (fresh.length) {
         await AnalyticsEvent.insertMany(fresh);
         // 2026-08-28 TESTER PRACTICE LEDGER: events carrying a numeric testerId
@@ -1288,6 +1307,29 @@ app.post('/api/rolodex/tester/accept', async (req, res) => {
   }
 });
 
+// 2026-09-13 BUILD 67 TESTER VISIT BEACON — POST { code } from tester.html the
+// moment a deeplink OPENS (before any tap). Same numeric-code validation as
+// accept; stores no name, no phone, no email, no UA — the roster gets the
+// visited rung it was missing between invited and accepted. Idempotent per
+// slot: first visit fixes createdAt, re-visits bump count + lastVisitAt.
+app.post('/api/rolodex/tester/visit', async (req, res) => {
+  try {
+    const code = Number(req.body?.code);
+    const slot = TESTER_CODES.indexOf(code);
+    if (!code || slot < 0) return res.status(404).json({ error: 'unknown code' });
+    const testerId = slot + 1;
+    const doc = await TesterVisit.findOneAndUpdate(
+      { testerId },
+      { $set: { lastVisitAt: new Date() }, $setOnInsert: { code }, $inc: { visits: 1 } },
+      { new: true, upsert: true },
+    ).lean();
+    res.json({ ok: true, testerId, visits: doc.visits, firstVisitAt: doc.createdAt, lastVisitAt: doc.lastVisitAt });
+  } catch (err) {
+    console.error('[rolodex/tester/visit]', err.message);
+    res.status(500).json({ error: 'visit failed: ' + (err?.message || 'unknown') });
+  }
+});
+
 // 2026-08-31 BUILD 54 (founder): INVITE MARK — POST { code } from the
 // dashboard's invite-line Copy (TESTER_ADMIN_KEY gated, like the roster).
 // Records that the deeplink for this slot has been handed out. Idempotent:
@@ -1326,14 +1368,16 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
     // founder's TESTER_ADMIN_KEY=... line was silently ignored (401 forever).
     const expected = String(envVar('TESTER_ADMIN_KEY') || '');
     if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
-    const [accepts, days, feedbacks, invites] = await Promise.all([
+    const [accepts, days, feedbacks, invites, visits] = await Promise.all([
       TesterAccept.find({}).lean(),
       TesterDay.find({}).lean(),
       InvestorFeedback.find({}, 'testerId createdAt').lean(),
       TesterInvite.find({}).lean(), // 2026-08-31 BUILD 54: the invite marks
+      TesterVisit.find({}).lean(), // 2026-09-13 BUILD 67: the visit beacons
     ]);
     const acceptMap = new Map(accepts.map((a) => [a.testerId, a]));
     const inviteMap = new Map(invites.map((v) => [v.testerId, v]));
+    const visitMap = new Map(visits.map((v) => [v.testerId, v]));
     const dayMap = new Map();
     for (const d of days) {
       const list = dayMap.get(d.testerId) || [];
@@ -1390,6 +1434,11 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
         status,
         nudge,
         invitedAt: inv?.invitedAt || null,
+        // 2026-09-13 BUILD 67: the VISIT rung — the deeplink was opened
+        // (numeric code only). Sits between invited and accepted in the story.
+        visitedAt: visitMap.get(slot)?.createdAt || null,
+        visitCount: visitMap.get(slot)?.visits || 0,
+        lastVisitAt: visitMap.get(slot)?.lastVisitAt || null,
         acceptedAt: acc?.createdAt || null,
         firstSeenDay: list.length ? list[0].day : null,
         lastSeenDay: last?.day || null,
@@ -1408,6 +1457,9 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
       summary: {
         claimed,
         invited: testers.filter((t) => t.status === 'invited').length,
+        // 2026-09-13 BUILD 67: slots whose deeplink has been opened at least
+        // once (visit beacon) — the funnel rung between invited and claimed.
+        visited: testers.filter((t) => t.visitedAt).length,
         installed: testers.filter((t) => t.status === 'installed' || t.status === 'practicing').length,
         practicing: testers.filter((t) => t.status === 'practicing').length,
         nudges: testers.filter((t) => t.nudge).length,
