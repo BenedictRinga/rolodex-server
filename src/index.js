@@ -252,7 +252,9 @@ const updateRoutes = require('./routes/updates.routes.js');
 app.use('/api/rolodex/updates', updateRoutes);
 
 app.get('/api/rolodex/health', (_req, res) => {
-  res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', at: new Date().toISOString() });
+  // 2026-09-13 BUILD 69: analyticsIngestFailures rides on /health — a single
+  // glance at the droplet tells whether the ledger is swallowing batches.
+  res.json({ ok: true, db: conn.readyState === 1 ? 'connected' : 'connecting', analyticsIngestFailures, at: new Date().toISOString() });
 });
 
 // 2026-08-20 STUDIO TTS: rolodex-server's OWN Qwen proxy for StudioPlayback /
@@ -1189,6 +1191,14 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
 const INGEST_HOURLY_CAP = 2000;
 const ingestBuckets = new Map(); // deviceId -> { hour, count }
 
+// 2026-09-13 BUILD 69 (founder: "if there is an error, will we know in the
+// Investor portal?"): the ingest 500'd SILENTLY for two weeks (build 47's
+// ObjectId cast bug) while every device kept retrying — nobody knew because
+// nothing counted. Every failed batch now increments this since-boot counter,
+// surfaced on /health and in the summary's reliability block. The next
+// ingestion outage is visible in hours, not weeks.
+let analyticsIngestFailures = 0;
+
 app.post('/api/rolodex/analytics/events', async (req, res) => {
   try {
     const deviceId = String(req.body?.deviceId || '').slice(0, 80);
@@ -1245,6 +1255,10 @@ app.post('/api/rolodex/analytics/events', async (req, res) => {
     }
     res.json({ ok: true, accepted: 0 });
   } catch (err) {
+    // BUILD 69: count every failed batch — /health and the portal reliability
+    // block surface it, so an ingest outage can never again run silent.
+    analyticsIngestFailures += 1;
+    console.error('[analytics/ingest]', err.message);
     res.status(500).json({ error: 'analytics ingest failed: ' + (err?.message || 'unknown') });
   }
 });
@@ -1908,6 +1922,67 @@ async function computeAnalyticsSummary() {
   const median = (arr) => (arr.length ? arr.slice().sort((a, b) => a - b)[Math.floor(arr.length / 2)] : null);
   const sharesTotal = shareByVoice.reduce((a, b) => a + b.count, 0);
 
+  // 2026-09-13 BUILD 69 (founder: "if there is an error, will we know in the
+  // Investor portal?"): the RELIABILITY block. The app now reports its own
+  // failures — ai_chat_failed (home chat, app 187: httpNNN/empty/network/
+  // timeout), ai_draft_failed (compose/refine dying before the on-device
+  // fallback masks it) — and this block turns them into a health panel next
+  // to the growth numbers. Failure rate is failures over attempts (sends +
+  // failures), 7 days, organic devices. ingestFailures is the since-boot
+  // server counter (also on /health). Crashes ride the dedicated JSONL ledger
+  // summarized below — the CrashReporterService stream, not double-counted
+  // here as analytics events.
+  const [chatSends7d, chatFails7d, draftFails7d, chatFailStages] = await Promise.all([
+    AnalyticsEvent.countDocuments({ event: 'confidante_message', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
+    AnalyticsEvent.countDocuments({ event: 'ai_chat_failed', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
+    AnalyticsEvent.countDocuments({ event: 'ai_draft_failed', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'ai_chat_failed', ts: { $gte: weekAgo } } },
+      { $group: { _id: '$props.stage', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+  ]);
+  const chatAttempts7d = chatSends7d + chatFails7d;
+  const reliability = {
+    chatSends7d,
+    chatFails7d,
+    chatFailureRatePct: chatAttempts7d ? Math.round((100 * chatFails7d) / chatAttempts7d) : null,
+    chatFailStages: chatFailStages.map((s) => ({ stage: s._id || 'unknown', count: s.count })),
+    draftFails7d,
+    ingestFailures: analyticsIngestFailures,
+  };
+
+  // 2026-09-13 BUILD 69: the CRASH LEDGER joins the panel. The app's
+  // CrashReporterService (2026-08-27) already catches window.onerror +
+  // unhandledrejection and appends JSONL lines to data/crashes.jsonl — but the
+  // only read path was `tail data/crashes.jsonl` over SSH, so crashes were
+  // collected and INVISIBLE. Summarize the tail right here: counts 7d/30d and
+  // the top type×page pairs (routes only — the file never carries names or
+  // message text beyond the error itself).
+  let crashes7d = 0;
+  let crashes30d = 0;
+  const crashTop = new Map();
+  try {
+    const lines = (await fs.promises.readFile(CRASHES_FILE, 'utf8')).trim().split('\n').slice(-1000);
+    const nowMs = Date.now();
+    for (const line of lines) {
+      try {
+        const c = JSON.parse(line);
+        const age = nowMs - Number(c.ts || 0);
+        if (age <= 7 * d) crashes7d += 1;
+        if (age <= 30 * d) {
+          crashes30d += 1;
+          const key = `${c.type || 'error'} @ ${String(c.page || '/').slice(0, 40)}`;
+          crashTop.set(key, (crashTop.get(key) || 0) + 1);
+        }
+      } catch { /* a torn line never kills the summary */ }
+    }
+  } catch { /* missing/cold file — zeros are the truth */ }
+  reliability.crashes7d = crashes7d;
+  reliability.crashes30d = crashes30d;
+  reliability.crashTop = [...crashTop.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
+    .map(([crash, count]) => ({ crash, count }));
+
   return {
     // 2026-08-30 BUILD 47: the top line is ORGANIC — own-fleet (dev + tester)
     // devices are counted separately in ownFleet, never mixed in.
@@ -1943,6 +2018,7 @@ async function computeAnalyticsSummary() {
       medianHoursToAccept: median(hoursToAccept),
     },
     locales, // 2026-08-29 BUILD 149: where in the world / which language / do they switch
+    reliability, // 2026-09-13 BUILD 69: the health panel — chat pipeline failures, app errors, ingest counter
   };
 }
 
