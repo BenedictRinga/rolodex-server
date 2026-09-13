@@ -1733,7 +1733,13 @@ async function computeAnalyticsSummary() {
   // 2026-08-31 BUILD 50 (founder): device_list_started LEADS the table — the
   // moment a real person's card is added (device pick, manual entry, invite
   // accepted, walk confirm). The app fires it once ever per device.
-  const activationEvents = ['device_list_started', 'card_added', 'followup_created', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
+  // 2026-09-13 BUILD 68 (founder: rows that can never move do not fit the
+  // bill): card_added is fired by NO code path anywhere and followup_created
+  // died with the follow-up engine (app build 183) — both rows read 0 by
+  // DEFINITION, forever. Swapped for milestones the app actually emits:
+  // loop_captured (the first real act of capture) and confidante_message
+  // (the Assistant conversation - home tab since app 187 + the modal).
+  const activationEvents = ['device_list_started', 'loop_captured', 'confidante_message', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
   const activation = {};
   for (const ev of activationEvents) {
     activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev, deviceId: { $nin: noiseArr } })).length;

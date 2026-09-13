@@ -54,8 +54,17 @@ git pull origin "$BRANCH"
 echo "Installing dependencies (yarn only)..."
 yarn
 
-# Manage version (pass first argument if provided, e.g. ./deploy.sh 0.4.0)
-manage_version "$1"
+# Manage version — ONLY when an argument is passed (e.g. ./deploy.sh 0.4.0).
+# 2026-09-13 BUILD 68 (founder: the droplet drifted to 0.3.138 while the app
+# is 0.3.1 — every argless deploy incremented the patch, so the SERVER version
+# and the APP version diverged and Settings advertised a bogus update): the
+# repo's version.txt (restored by `git reset --hard` just above) is now the
+# source of truth; an explicit argument still overrides it.
+if [ -n "$1" ]; then
+    manage_version "$1"
+else
+    echo "Keeping the repo version.txt as the truth ($(cat version.txt 2>/dev/null || echo 'missing')). Pass an argument (./deploy.sh 0.4.0) to override."
+fi
 
 # Ensure .env exists with a Mongo URI: prefer MONGO_DB_URI_ROLODEX (a future
 # dedicated account), else reuse the paid URI (fresh rolodex db on the cluster).
