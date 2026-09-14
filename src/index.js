@@ -1932,7 +1932,7 @@ async function computeAnalyticsSummary() {
   // server counter (also on /health). Crashes ride the dedicated JSONL ledger
   // summarized below — the CrashReporterService stream, not double-counted
   // here as analytics events.
-  const [chatSends7d, chatFails7d, draftFails7d, chatFailStages] = await Promise.all([
+  const [chatSends7d, chatFails7d, draftFails7d, chatFailStages, appErrors7d, appErrors30d, appErrorStages] = await Promise.all([
     AnalyticsEvent.countDocuments({ event: 'confidante_message', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
     AnalyticsEvent.countDocuments({ event: 'ai_chat_failed', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
     AnalyticsEvent.countDocuments({ event: 'ai_draft_failed', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
@@ -1940,6 +1940,20 @@ async function computeAnalyticsSummary() {
       { $match: { event: 'ai_chat_failed', ts: { $gte: weekAgo } } },
       { $group: { _id: '$props.stage', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
+    ]),
+    // 2026-09-14 BUILD 70 (founder: global app error analytics is MORE
+    // SCALABLE than a file ledger): the app fires `app_error` { type, page }
+    // from the global window.onerror + unhandledrejection hook (build 190,
+    // 5s/type+page flood valve), so every error rides the batched, idempotent,
+    // hourly-capped analytics ingest — no file growth, no SSH tail needed.
+    // The JSONL ledger stays as the detailed stream (messages + stacks).
+    AnalyticsEvent.countDocuments({ event: 'app_error', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
+    AnalyticsEvent.countDocuments({ event: 'app_error', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } }),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'app_error', ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.type', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 8 },
     ]),
   ]);
   const chatAttempts7d = chatSends7d + chatFails7d;
@@ -1949,6 +1963,9 @@ async function computeAnalyticsSummary() {
     chatFailureRatePct: chatAttempts7d ? Math.round((100 * chatFails7d) / chatAttempts7d) : null,
     chatFailStages: chatFailStages.map((s) => ({ stage: s._id || 'unknown', count: s.count })),
     draftFails7d,
+    appErrors7d,
+    appErrors30d,
+    appErrorStages: appErrorStages.map((s) => ({ stage: s._id || 'unknown', count: s.count })),
     ingestFailures: analyticsIngestFailures,
   };
 
