@@ -54,17 +54,17 @@ git pull origin "$BRANCH"
 echo "Installing dependencies (yarn only)..."
 yarn
 
-# Manage version — ONLY when an argument is passed (e.g. ./deploy.sh 0.4.0).
-# 2026-09-13 BUILD 68 (founder: the droplet drifted to 0.3.138 while the app
-# is 0.3.1 — every argless deploy incremented the patch, so the SERVER version
-# and the APP version diverged and Settings advertised a bogus update): the
-# repo's version.txt (restored by `git reset --hard` just above) is now the
-# source of truth; an explicit argument still overrides it.
-if [ -n "$1" ]; then
-    manage_version "$1"
-else
-    echo "Keeping the repo version.txt as the truth ($(cat version.txt 2>/dev/null || echo 'missing')). Pass an argument (./deploy.sh 0.4.0) to override."
-fi
+# Manage version — POLICY (2026-09-14 BUILD 72, founder: "we should be
+# incrementing to 0.3.142 instead, and this should be the policy going
+# forward"): EVERY argless deploy INCREMENTS the patch. version.txt is
+# gitignored, so it survives the `git reset --hard` above and ACCUMULATES on
+# the droplet (0.3.141 -> 0.3.142 -> 0.3.143 ...). An explicit argument sets
+# the version exactly — for deliberate jumps only (e.g. ./deploy.sh 0.4.0
+# when the work merits a minor bump); the next argless deploy then continues
+# from that number (0.4.1, 0.4.2, ...). The version now means "platform
+# deploy number", so the app's update notice after each deploy is honest:
+# a reload gets the newest bundle.
+manage_version "${1:-}"
 
 # Ensure .env exists with a Mongo URI: prefer MONGO_DB_URI_ROLODEX (a future
 # dedicated account), else reuse the paid URI (fresh rolodex db on the cluster).
