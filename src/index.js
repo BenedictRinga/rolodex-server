@@ -1922,7 +1922,15 @@ async function computeAnalyticsSummary() {
       { $group: { _id: '$props.tz', devices: { $addToSet: '$deviceId' }, count: { $sum: 1 } } },
       { $project: { _id: 1, count: 1, devices: { $size: '$devices' } } },
       { $sort: { devices: -1, count: -1 } },
-      { $limit: 8 },
+      // 2026-09-14 BUILD 76 (founder: could Africa/Nairobi be eclipsing every
+      // other Africa/... hit? — with a top 8, smaller zones could hide below
+      // the cut): 12 rows, so Africa/Lagos, Africa/Kampala, Africa/Cairo and
+      // friends surface the day they arrive. NOTE the semantics: a
+      // single-timezone country reports ONE zone named for its capital —
+      // Kenya's whole fleet sits in Africa/Nairobi — while multi-zone
+      // countries split into city zones (America/New_York is US Eastern
+      // only). So Nairobi 126 is the KENYAN fleet, not a city.
+      { $limit: 12 },
     ]),
     AnalyticsEvent.aggregate([
       { $match: { event: 'app_launch', 'props.tzRegion': { $exists: true, $ne: '' }, ts: { $gte: monthAgo } } },
