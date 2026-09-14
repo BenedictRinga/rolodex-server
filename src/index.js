@@ -1806,6 +1806,36 @@ async function computeAnalyticsSummary() {
     { $limit: 12 },
   ]);
 
+  // 2026-09-14 BUILD 71 (founder: "do we have data to sift for TRENDS - what
+  // to refine, to double down on, to drop, or to re-interpret?"): a DAY-BY-DAY
+  // per-event matrix, last 14 days, organic devices. The 7d topEvents total
+  // blurs the story (a feature dying on Tuesday reads the same as one
+  // growing every day); this matrix makes the slope visible — the refine /
+  // double-down / drop table the founder asked for. All events, grouped
+  // day x event, reshaped below into { days: [...], rows: [...] }.
+  const fortnightAgo = new Date(Date.now() - 14 * d);
+  const dailyRaw = await AnalyticsEvent.aggregate([
+    { $match: { ts: { $gte: fortnightAgo }, deviceId: { $nin: noiseArr } } },
+    { $group: { _id: { day: { $dateToString: { format: '%Y-%m-%d', date: '$ts' } }, event: '$event' }, count: { $sum: 1 } } },
+  ]);
+  const dayKeys = [];
+  for (let i = 13; i >= 0; i -= 1) dayKeys.push(new Date(Date.now() - i * d).toISOString().slice(0, 10));
+  const dayIndex = new Map(dayKeys.map((k, i) => [k, i]));
+  const dailyCells = new Map(); // event -> counts[14]
+  for (const row of dailyRaw) {
+    const key = String(row._id?.event || 'unknown');
+    const idx = dayIndex.get(String(row._id?.day || ''));
+    if (idx === undefined) continue;
+    if (!dailyCells.has(key)) dailyCells.set(key, new Array(14).fill(0));
+    dailyCells.get(key)[idx] += row.count;
+  }
+  const dailyEvents = {
+    days: dayKeys,
+    rows: [...dailyCells.entries()]
+      .map(([event, counts]) => ({ event, counts, total: counts.reduce((s, c) => s + c, 0) }))
+      .sort((a, b) => b.total - a.total),
+  };
+
   // 2026-08-29 BUILD 144 (founder #3): a DEDICATED investors-portal line for
   // invite failures. The invitee taps "Something didn't work?" on the landing
   // (app build 142) and the anonymous invite_issue event lands here — the
@@ -2013,6 +2043,7 @@ async function computeAnalyticsSummary() {
     activation,
     retention,
     topEvents,
+    dailyEvents, // 2026-09-14 BUILD 71: the 14-day x event trend matrix (refine / double-down / drop)
     inviteIssues: {
       last24h: inviteIssues24h,
       last7d: inviteIssues7d,
