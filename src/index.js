@@ -1104,7 +1104,11 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
     const now = Date.now();
     const hourAgo = new Date(now - 3600_000);
     const dayAgo = new Date(now - 24 * 3600_000);
+    // 2026-09-14 BUILD 77 (Grok audit, verified): probe-* devices are the
+    // founder's curl probes, not customers - the explicit filter keeps them
+    // out of the totals forever.
     const [totalsAgg] = await DeviceState.aggregate([
+      { $match: { deviceId: { $not: /^probe-/ } } },
       {
         $group: {
           _id: null,
@@ -1753,7 +1757,10 @@ async function computeAnalyticsSummary() {
   // DEFINITION, forever. Swapped for milestones the app actually emits:
   // loop_captured (the first real act of capture) and confidante_message
   // (the Assistant conversation - home tab since app 187 + the modal).
-  const activationEvents = ['device_list_started', 'loop_captured', 'confidante_message', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
+  // 2026-09-14 BUILD 77 (Grok plan #1): first_loop_started LEADS - the very
+  // first loop of any kind (self-loop included) is the deed that proves a
+  // landing became a user. Fired once-ever by the app (build 205).
+  const activationEvents = ['first_loop_started', 'device_list_started', 'loop_captured', 'confidante_message', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
   const activation = {};
   for (const ev of activationEvents) {
     activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev, deviceId: { $nin: noiseArr } })).length;
