@@ -1866,6 +1866,36 @@ async function computeAnalyticsSummary() {
     counts: dayKeys.map((k) => growthMap.get(k) || 0),
   };
 
+  // 2026-09-14 BUILD 74 (founder: "the very windows we presented to users to
+  // exit to third-party apps are a veritable signal detector stage"): the
+  // CHANNEL FUNNEL. send_exit (app 194) logs every door tap — composer,
+  // card menu, chat copy, inbox copies — completion or not; message_sent now
+  // carries props.channel (the fire-and-close deed). Both sides per channel,
+  // 30d, organic: exits > sends per channel = the drop-off to read.
+  const [exitByChannel, sentByChannel] = await Promise.all([
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'send_exit', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } } },
+      { $group: { _id: '$props.channel', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'message_sent', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } } },
+      { $group: { _id: '$props.channel', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]),
+  ]);
+  const channelFunnelMap = new Map();
+  for (const r of exitByChannel) channelFunnelMap.set(String(r._id || 'unknown'), { exits: r.count, sends: 0 });
+  for (const r of sentByChannel) {
+    const key = String(r._id || 'unknown');
+    const row = channelFunnelMap.get(key) || { exits: 0, sends: 0 };
+    row.sends += r.count;
+    channelFunnelMap.set(key, row);
+  }
+  const channelExits = [...channelFunnelMap.entries()]
+    .map(([channel, v]) => ({ channel, exits: v.exits, sends: v.sends }))
+    .sort((a, b) => (b.exits + b.sends) - (a.exits + a.sends));
+
   // 2026-08-29 BUILD 144 (founder #3): a DEDICATED investors-portal line for
   // invite failures. The invitee taps "Something didn't work?" on the landing
   // (app build 142) and the anonymous invite_issue event lands here — the
@@ -2076,6 +2106,7 @@ async function computeAnalyticsSummary() {
     dailyEvents, // 2026-09-14 BUILD 71: the 14-day x event trend matrix (refine / double-down / drop)
     deviceGrowth, // 2026-09-14 BUILD 73: devices per first-sync day (arrival timeline)
     landingSources: landingSources.map((s) => ({ ref: s._id || 'direct', count: s.count })), // BUILD 73: once-per-device referrer attribution
+    channelExits, // 2026-09-14 BUILD 74: door taps vs deeds per channel (30d)
     inviteIssues: {
       last24h: inviteIssues24h,
       last7d: inviteIssues7d,
