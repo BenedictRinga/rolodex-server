@@ -1836,6 +1836,36 @@ async function computeAnalyticsSummary() {
       .sort((a, b) => b.total - a.total),
   };
 
+  // 2026-09-14 BUILD 73 (founder: "no clue how they are discovering the app,
+  // as we see no indicators of sharing or sending by earliest users"): two
+  // DISCOVERY lenses. (1) deviceGrowth — the arrival timeline: devices per
+  // day of FIRST SYNC (trialStartedAt is the device's birth date, falling
+  // back to lastSyncAt for pre-trial devices). Bursts here correlate with
+  // real-world shares and posts; a flat tail after a burst reads as churn.
+  // (2) landingSources — the app's once-per-device landing_source event
+  // (referrer host + ?src= tag, app build 193) — attribution from now on;
+  // empty until devices ship the event. WhatsApp forwards of the plain URL
+  // stay invisible by design (no tokens ride a share), so 'direct' is
+  // expected to dominate — the nginx referrer log covers the historical gap.
+  const [growthRaw, landingSources] = await Promise.all([
+    DeviceState.aggregate([
+      { $match: { $or: [{ trialStartedAt: { $gte: fortnightAgo } }, { $and: [{ trialStartedAt: null }, { lastSyncAt: { $gte: fortnightAgo } }] }] } },
+      { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: { $ifNull: ['$trialStartedAt', '$lastSyncAt'] } } }, devices: { $sum: 1 } } },
+      { $sort: { _id: 1 } },
+    ]),
+    AnalyticsEvent.aggregate([
+      { $match: { event: 'landing_source', ts: { $gte: monthAgo } } },
+      { $group: { _id: '$props.ref', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 8 },
+    ]),
+  ]);
+  const growthMap = new Map(growthRaw.map((g) => [g._id, g.devices]));
+  const deviceGrowth = {
+    days: dayKeys,
+    counts: dayKeys.map((k) => growthMap.get(k) || 0),
+  };
+
   // 2026-08-29 BUILD 144 (founder #3): a DEDICATED investors-portal line for
   // invite failures. The invitee taps "Something didn't work?" on the landing
   // (app build 142) and the anonymous invite_issue event lands here — the
@@ -2044,6 +2074,8 @@ async function computeAnalyticsSummary() {
     retention,
     topEvents,
     dailyEvents, // 2026-09-14 BUILD 71: the 14-day x event trend matrix (refine / double-down / drop)
+    deviceGrowth, // 2026-09-14 BUILD 73: devices per first-sync day (arrival timeline)
+    landingSources: landingSources.map((s) => ({ ref: s._id || 'direct', count: s.count })), // BUILD 73: once-per-device referrer attribution
     inviteIssues: {
       last24h: inviteIssues24h,
       last7d: inviteIssues7d,
