@@ -1086,8 +1086,10 @@ app.get('/api/rolodex/state/:deviceId', async (req, res) => {
 // The investor peek view — read-only, auto-refreshing, no account.
 app.get('/api/rolodex/live', async (_req, res) => {
   try {
-    const devices = await DeviceState.find({}).sort({ lastSyncAt: -1 }).limit(50).lean();
-    const total = await DeviceState.countDocuments();
+    // 2026-09-15 BUILD 78 (Grok review gap 5): probe-* stays out of the peek
+    // page too - the founder's curl probes are not customers.
+    const devices = await DeviceState.find({ deviceId: { $not: /^probe-/ } }).sort({ lastSyncAt: -1 }).limit(50).lean();
+    const total = await DeviceState.countDocuments({ deviceId: { $not: /^probe-/ } });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
     res.send(peekPage(devices, total));
@@ -1119,7 +1121,9 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
         },
       },
     ]);
-    const devices = await DeviceState.find({}).sort({ lastSyncAt: -1 }).limit(500).lean();
+    // 2026-09-15 BUILD 78 (Grok review gap 5): rooms, timeline and topDevices
+    // all draw from THIS list - one filter here cleans all three.
+    const devices = await DeviceState.find({ deviceId: { $not: /^probe-/ } }).sort({ lastSyncAt: -1 }).limit(500).lean();
     const roomMap = new Map();
     for (const d of devices) {
       const room = String(d.room || '').trim().toUpperCase() || '(no room)';
@@ -1153,7 +1157,10 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
     res.json({
       generatedAt: new Date().toISOString(),
       totals: {
-        devices: await DeviceState.countDocuments(),
+        // 2026-09-15 BUILD 78 (Grok review gap 5): totals.devices was a bare
+        // countDocuments() - probe-* posed inside it while the other totals
+        // excluded them. Consistent now.
+        devices: await DeviceState.countDocuments({ deviceId: { $not: /^probe-/ } }),
         contacts: totalsAgg?.contacts || 0,
         followUps: totalsAgg?.followUps || 0,
         activeLastHour: totalsAgg?.activeLastHour || 0,
@@ -1856,7 +1863,9 @@ async function computeAnalyticsSummary() {
   // expected to dominate — the nginx referrer log covers the historical gap.
   const [growthRaw, landingSources] = await Promise.all([
     DeviceState.aggregate([
-      { $match: { $or: [{ trialStartedAt: { $gte: fortnightAgo } }, { $and: [{ trialStartedAt: null }, { lastSyncAt: { $gte: fortnightAgo } }] }] } },
+      // 2026-09-15 BUILD 78 (Grok review gap 5): the arrival timeline counted
+      // probe-* births as customer arrivals. Excluded.
+      { $match: { deviceId: { $not: /^probe-/ }, $or: [{ trialStartedAt: { $gte: fortnightAgo } }, { $and: [{ trialStartedAt: null }, { lastSyncAt: { $gte: fortnightAgo } }] }] } },
       { $group: { _id: { $dateToString: { format: '%Y-%m-%d', date: { $ifNull: ['$trialStartedAt', '$lastSyncAt'] } } }, devices: { $sum: 1 } } },
       { $sort: { _id: 1 } },
     ]),
