@@ -2114,6 +2114,40 @@ async function computeAnalyticsSummary() {
   reliability.crashTop = [...crashTop.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5)
     .map(([crash, count]) => ({ crash, count }));
 
+  // 2026-09-15 BUILD 79 THE DEVICE CATCHER (founder: "I still do not know my
+  // device. I suggest catching my device, and those for testers. I do not know
+  // how. Then we write them onto .env at backend"): the roster of every device
+  // id the analytics stream saw in the last 30 days — lastSeen, event volume,
+  // the tester codes it posted under (testerId rides every tester event since
+  // build 119), and its clock's timezone. The founder ticks the rows that are
+  // theirs or their testers' and copies the LK_NOISE_DEVICES line for the
+  // droplet .env. Already-noised ids are excluded, so a correct .env empties
+  // this roster — the list verifies itself.
+  let knownDevices = [];
+  try {
+    const knownRaw = await AnalyticsEvent.aggregate([
+      { $match: { ts: { $gte: monthAgo }, deviceId: { $nin: [...noiseArr, ''] } } },
+      { $group: {
+          _id: '$deviceId',
+          events: { $sum: 1 },
+          firstSeen: { $min: '$ts' },
+          lastSeen: { $max: '$ts' },
+          testerCodes: { $addToSet: '$props.testerId' },
+          tz: { $max: '$props.tz' },
+      } },
+      { $sort: { events: -1 } },
+      { $limit: 150 },
+    ]);
+    knownDevices = knownRaw.map((r) => ({
+      id: r._id,
+      events: r.events || 0,
+      firstSeen: r.firstSeen || null,
+      lastSeen: r.lastSeen || null,
+      testerCodes: (r.testerCodes || []).filter((t) => Number.isFinite(t)),
+      tz: r.tz || '',
+    }));
+  } catch { /* a cold aggregate never kills the summary */ }
+
   return {
     // 2026-08-30 BUILD 47: the top line is ORGANIC — own-fleet (dev + tester)
     // devices are counted separately in ownFleet, never mixed in.
@@ -2131,6 +2165,7 @@ async function computeAnalyticsSummary() {
     deviceGrowth, // 2026-09-14 BUILD 73: devices per first-sync day (arrival timeline)
     landingSources: landingSources.map((s) => ({ ref: s._id || 'direct', count: s.count })), // BUILD 73: once-per-device referrer attribution
     channelExits, // 2026-09-14 BUILD 74: door taps vs deeds per channel (30d)
+    knownDevices, // 2026-09-15 BUILD 79: THE DEVICE CATCHER — the noise-list roster
     inviteIssues: {
       last24h: inviteIssues24h,
       last7d: inviteIssues7d,
