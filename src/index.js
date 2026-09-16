@@ -1752,8 +1752,15 @@ async function computeAnalyticsSummary() {
   // where they belong. LK_NOISE_DEVICES stays for the founder's own
   // non-tester devices (Settings -> Cloud Sync shows the id).
   let testerDeviceIds = [];
+  // 2026-09-16 BUILD 83 THE 500 FIX (founder: "analytics... is returning a
+  // 500" + the Settings investor section stopped opening — same root):
+  // testerDeviceRows was block-scoped INSIDE this try, but ownFleet's
+  // testerRoster references it ~430 lines later — ReferenceError, the whole
+  // computeAnalyticsSummary() threw, every summary consumer died together.
+  // Hoisted to function scope.
+  let testerDeviceRows = [];
   try {
-    const testerDeviceRows = await AnalyticsEvent.aggregate([
+    testerDeviceRows = await AnalyticsEvent.aggregate([
       { $match: { 'props.testerId': { $type: 'number', $gt: 0 } } },
       { $group: { _id: '$deviceId', codes: { $addToSet: '$props.testerId' } } },
     ]);
