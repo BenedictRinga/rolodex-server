@@ -132,6 +132,12 @@ const TESTER_CODES = [
   // instead: no expiry to communicate, no reuse, no collision. Existing
   // codes/links stay exactly as they are; slots 16-20 are pure additions.
   204817, 316529, 427638, 538741, 658274,
+  // 2026-09-16 BUILD 81 COHORT 20 -> 30 (founder: "I wanted the testers
+  // allocation increased to 30"): slots 21-30 are pure additions - the same
+  // permanent-slot rule holds (testerId = index+1, never reissued). The
+  // dashboard total-slots chip and the roster derive from this length.
+  714926, 825639, 936714, 148257, 259368,
+  361479, 472581, 583692, 694713, 715824,
 ]; // slot N = index + 1
 
 const TesterAccept = conn.model('TesterAccept', new mongoose.Schema({
