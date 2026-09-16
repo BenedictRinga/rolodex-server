@@ -1480,6 +1480,7 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
     res.json({
       generatedAt: new Date().toISOString(),
       summary: {
+        totalSlots: TESTER_CODES.length,
         claimed,
         invited: testers.filter((t) => t.status === 'invited').length,
         // 2026-09-13 BUILD 67: slots whose deeplink has been opened at least
@@ -1737,6 +1738,22 @@ async function computeAnalyticsSummary() {
     for (const r of testerRows) if (r._id) noise.add(String(r._id));
   } catch { /* if the tester scan fails, the file/env lists still apply */ }
   const noiseArr = [...noise];
+  // 2026-09-16 BUILD 80 THE TESTER AUTO-CATCH (founder: "Should those of
+  // testers not be automatically available from the 10 out of 20 I
+  // invited?"): a tester's device tags EVERY analytics event with its
+  // numeric testerId — so the tester fleet catches ITSELF. Those deviceIds
+  // leave the organic line without any .env editing, and land in own fleet
+  // where they belong. LK_NOISE_DEVICES stays for the founder's own
+  // non-tester devices (Settings -> Cloud Sync shows the id).
+  let testerDeviceIds = [];
+  try {
+    const testerDeviceRows = await AnalyticsEvent.aggregate([
+      { $match: { 'props.testerId': { $type: 'number', $gt: 0 } } },
+      { $group: { _id: '$deviceId', codes: { $addToSet: '$props.testerId' } } },
+    ]);
+    testerDeviceIds = testerDeviceRows.map((r) => r._id).filter((id) => id && !noiseArr.includes(id));
+  } catch { /* cold aggregate: the env list still applies */ }
+  const organicArr = [...noiseArr, ...testerDeviceIds];
   const ownDau = dauAll.filter((x) => noise.has(x)).length;
   const ownWau = wauAll.filter((x) => noise.has(x)).length;
   const ownMau = mauAll.filter((x) => noise.has(x)).length;
@@ -1745,12 +1762,12 @@ async function computeAnalyticsSummary() {
   const wau = organic(wauAll);
   const mau = organic(mauAll);
 
-  const sessions24h = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: dayAgo }, deviceId: { $nin: noiseArr } });
-  const sessions7d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } });
-  const sessions30d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } });
+  const sessions24h = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: dayAgo }, deviceId: { $nin: organicArr } });
+  const sessions7d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: weekAgo }, deviceId: { $nin: organicArr } });
+  const sessions30d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } });
 
   const [avgSession] = await AnalyticsEvent.aggregate([
-    { $match: { event: 'session_end', 'props.duration': { $gt: 0 }, ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } } },
+    { $match: { event: 'session_end', 'props.duration': { $gt: 0 }, ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } } },
     { $group: { _id: null, avg: { $avg: '$props.duration' }, count: { $sum: 1 } } },
   ]);
 
@@ -1770,7 +1787,7 @@ async function computeAnalyticsSummary() {
   const activationEvents = ['first_loop_started', 'device_list_started', 'loop_captured', 'confidante_message', 'message_sent', 'loop_closed', 'invite_created', 'billing_started', 'billing_succeeded'];
   const activation = {};
   for (const ev of activationEvents) {
-    activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev, deviceId: { $nin: noiseArr } })).length;
+    activation[ev.replace(/_/g, '')] = (await AnalyticsEvent.distinct('deviceId', { event: ev, deviceId: { $nin: organicArr } })).length;
   }
 
   // Retention cohorts: last 7 days, first app_launch per device — anchored
@@ -1814,7 +1831,7 @@ async function computeAnalyticsSummary() {
   }
 
   const topEvents = await AnalyticsEvent.aggregate([
-    { $match: { ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } } },
+    { $match: { ts: { $gte: weekAgo }, deviceId: { $nin: organicArr } } },
     { $group: { _id: '$event', count: { $sum: 1 } } },
     { $sort: { count: -1 } },
     { $limit: 12 },
@@ -1829,7 +1846,7 @@ async function computeAnalyticsSummary() {
   // day x event, reshaped below into { days: [...], rows: [...] }.
   const fortnightAgo = new Date(Date.now() - 14 * d);
   const dailyRaw = await AnalyticsEvent.aggregate([
-    { $match: { ts: { $gte: fortnightAgo }, deviceId: { $nin: noiseArr } } },
+    { $match: { ts: { $gte: fortnightAgo }, deviceId: { $nin: organicArr } } },
     { $group: { _id: { day: { $dateToString: { format: '%Y-%m-%d', date: '$ts' } }, event: '$event' }, count: { $sum: 1 } } },
   ]);
   const dayKeys = [];
@@ -1890,12 +1907,12 @@ async function computeAnalyticsSummary() {
   // 30d, organic: exits > sends per channel = the drop-off to read.
   const [exitByChannel, sentByChannel] = await Promise.all([
     AnalyticsEvent.aggregate([
-      { $match: { event: 'send_exit', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } } },
+      { $match: { event: 'send_exit', ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } } },
       { $group: { _id: '$props.channel', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
     AnalyticsEvent.aggregate([
-      { $match: { event: 'message_sent', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } } },
+      { $match: { event: 'message_sent', ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } } },
       { $group: { _id: '$props.channel', count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
@@ -2047,9 +2064,9 @@ async function computeAnalyticsSummary() {
   // summarized below — the CrashReporterService stream, not double-counted
   // here as analytics events.
   const [chatSends7d, chatFails7d, draftFails7d, chatFailStages, appErrors7d, appErrors30d, appErrorStages] = await Promise.all([
-    AnalyticsEvent.countDocuments({ event: 'confidante_message', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
-    AnalyticsEvent.countDocuments({ event: 'ai_chat_failed', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
-    AnalyticsEvent.countDocuments({ event: 'ai_draft_failed', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
+    AnalyticsEvent.countDocuments({ event: 'confidante_message', ts: { $gte: weekAgo }, deviceId: { $nin: organicArr } }),
+    AnalyticsEvent.countDocuments({ event: 'ai_chat_failed', ts: { $gte: weekAgo }, deviceId: { $nin: organicArr } }),
+    AnalyticsEvent.countDocuments({ event: 'ai_draft_failed', ts: { $gte: weekAgo }, deviceId: { $nin: organicArr } }),
     AnalyticsEvent.aggregate([
       { $match: { event: 'ai_chat_failed', ts: { $gte: weekAgo } } },
       { $group: { _id: '$props.stage', count: { $sum: 1 } } },
@@ -2061,8 +2078,8 @@ async function computeAnalyticsSummary() {
     // 5s/type+page flood valve), so every error rides the batched, idempotent,
     // hourly-capped analytics ingest — no file growth, no SSH tail needed.
     // The JSONL ledger stays as the detailed stream (messages + stacks).
-    AnalyticsEvent.countDocuments({ event: 'app_error', ts: { $gte: weekAgo }, deviceId: { $nin: noiseArr } }),
-    AnalyticsEvent.countDocuments({ event: 'app_error', ts: { $gte: monthAgo }, deviceId: { $nin: noiseArr } }),
+    AnalyticsEvent.countDocuments({ event: 'app_error', ts: { $gte: weekAgo }, deviceId: { $nin: organicArr } }),
+    AnalyticsEvent.countDocuments({ event: 'app_error', ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } }),
     AnalyticsEvent.aggregate([
       { $match: { event: 'app_error', ts: { $gte: monthAgo } } },
       { $group: { _id: '$props.type', count: { $sum: 1 } } },
@@ -2126,7 +2143,7 @@ async function computeAnalyticsSummary() {
   let knownDevices = [];
   try {
     const knownRaw = await AnalyticsEvent.aggregate([
-      { $match: { ts: { $gte: monthAgo }, deviceId: { $nin: [...noiseArr, ''] } } },
+      { $match: { ts: { $gte: monthAgo }, deviceId: { $nin: [...organicArr, ''] } } },
       { $group: {
           _id: '$deviceId',
           events: { $sum: 1 },
@@ -2154,7 +2171,17 @@ async function computeAnalyticsSummary() {
     dau: dau.length,
     wau: wau.length,
     mau: mau.length,
-    ownFleet: { devices: noise.size, dau: ownDau, wau: ownWau, mau: ownMau },
+    ownFleet: {
+      devices: noise.size + testerDeviceIds.length,
+      dau: ownDau, wau: ownWau, mau: ownMau,
+      // BUILD 80: the tester fleet, auto-caught by their own testerId tags —
+      // visible here so the founder can see them without any .env editing.
+      testerDevices: testerDeviceIds.length,
+      testerRoster: testerDeviceRows
+        .filter((r) => r._id && !noiseArr.includes(r._id))
+        .slice(0, 30)
+        .map((r) => ({ id: r._id, testerCodes: (r.codes || []).filter(Number.isFinite) })),
+    },
     sessions: { last24h: sessions24h, last7d: sessions7d, last30d: sessions30d },
     avgSessionSeconds: Math.round(Number(avgSession?.avg) || 0),
     sessionsRecorded30d: avgSession?.count || 0,
