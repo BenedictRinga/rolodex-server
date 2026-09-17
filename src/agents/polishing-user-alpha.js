@@ -31,6 +31,23 @@ const SYSTEM_PROMPT = [
   'Return ONLY the polished message — no preamble, no quotes, no explanation.',
 ].join(' ');
 
+// 2026-09-17 BUILD 87 THE SLANTS ARE THE AGENT'S OWN (founder: "The slant
+// cannot be ignored in favor of a generic AI agent intervention"): each tone
+// carries its precise LoopKeeper meaning — the agent does not guess what
+// "short" means, it KNOWS. The route appends the requested slant's
+// definition to the system prompt verbatim.
+const TONE_SLANTS = {
+  short: 'SHORT — tighter and briefer: cut every word not doing work; keep the warmth; aim for a fraction of the original length.',
+  light: 'LIGHT — lighter and brighter: gentle, easy warmth; a touch of lightness is welcome, never silly; soften any heaviness.',
+  honest: 'HONEST — plainer and more candid: say the true thing directly, no hedging, no filler, no apologies beyond what the user wrote; keep it kind.',
+  formal: 'FORMAL — more composed and respectful: measured sentences, no slang, no contractions where formality reads better.',
+};
+
+/** The requested slant's exact definition, or SHORT's for an unknown tone. */
+function slantFor(tone) {
+  return TONE_SLANTS[String(tone || '').toLowerCase()] || TONE_SLANTS.short;
+}
+
 /** THE PERSISTENCE TOOL — append one polish pair to the training-corpus seed.
  *  Best-effort by design: the polish itself never depends on the ledger. */
 function recordPair(rec) {
@@ -49,4 +66,4 @@ function readCorpus(limit = 200) {
   } catch { return []; }
 }
 
-module.exports = { SYSTEM_PROMPT, recordPair, readCorpus, LEDGER_PATH };
+module.exports = { SYSTEM_PROMPT, TONE_SLANTS, slantFor, recordPair, readCorpus, LEDGER_PATH };

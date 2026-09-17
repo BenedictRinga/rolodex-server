@@ -651,7 +651,9 @@ app.post('/api/loopkeeper/polish-alpha', async (req, res) => {
     if (!words) return res.status(400).json({ error: 'words required' });
     const agent = require('./agents/polishing-user-alpha');
     const apiMessages = [
-      { role: 'system', content: agent.SYSTEM_PROMPT + `\n\nREQUESTED TONE: "${tone}". LANGUAGE RULE (this request): reply in "${lang}".` },
+      // BUILD 87: THE SLANT CANNOT BE IGNORED — the requested tone carries its
+      // exact LoopKeeper definition into the prompt (never a generic rewrite).
+      { role: 'system', content: agent.SYSTEM_PROMPT + `\n\nREQUESTED SLANT: ${agent.slantFor(tone)} LANGUAGE RULE (this request): reply in "${lang}".` },
       { role: 'user', content: words },
     ];
     const call = async (key, base, model, extraHeaders) => {
