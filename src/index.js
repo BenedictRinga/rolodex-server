@@ -633,6 +633,70 @@ app.post('/api/rolodex/chat', async (req, res) => {
   }
 });
 
+// 2026-09-17 BUILD 86 THE POLISHINGUSERALPHA AGENT (founder: a tone tap on a
+// user-owned draft must be AI ASSISTANCE — the user-modified words go to the
+// backend for polish, "similar to a track on beta section", with
+// complementary persistence tools seeded for the future training /
+// datacenter). The agent polishes THE USER'S OWN WORDS into the requested
+// tone — meaning, names and facts intact — and every pair lands in
+// data/polish-alpha.jsonl (no identifiers; the corpus seed lives only here).
+app.post('/api/loopkeeper/polish-alpha', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const startedAt = Date.now();
+  try {
+    const words = String(req.body?.words || '').slice(0, 2000);
+    const tone = ['short', 'light', 'honest', 'formal'].includes(req.body?.tone) ? req.body.tone : 'short';
+    const lang = String(req.body?.lang || req.headers['accept-language'] || '').slice(0, 32).split(',')[0].trim() || 'en';
+    const engine = String(req.body?.engine || 'deepseek');
+    if (!words) return res.status(400).json({ error: 'words required' });
+    const agent = require('./agents/polishing-user-alpha');
+    const apiMessages = [
+      { role: 'system', content: agent.SYSTEM_PROMPT + `\n\nREQUESTED TONE: "${tone}". LANGUAGE RULE (this request): reply in "${lang}".` },
+      { role: 'user', content: words },
+    ];
+    const call = async (key, base, model, extraHeaders) => {
+      const r = await fetch(base, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key, ...(extraHeaders || {}) },
+        body: JSON.stringify({ model, messages: apiMessages, max_tokens: 320, temperature: 0.6 }),
+      });
+      if (!r.ok) throw new Error('upstream ' + r.status);
+      const data = await r.json();
+      const out = String(data?.choices?.[0]?.message?.content || '').trim();
+      if (!out) throw new Error('empty reply');
+      return out;
+    };
+    const glmHeaders = { 'HTTP-Referer': 'https://zyppar.com', 'X-Title': 'LoopKeeper' };
+    let reply = '';
+    let usedEngine = '';
+    // The same ladder the Confidante walks: the requested engine first, then
+    // DeepSeek -> GLM -> Grok, so one configured key keeps the assist alive.
+    if (engine === 'glm' && envVar('OPENROUTER_API_KEY')) {
+      try { reply = await call(envVar('OPENROUTER_API_KEY'), 'https://openrouter.ai/api/v1/chat/completions', envVar('OPENROUTER_MODEL') || 'z-ai/glm-5.3-flash', glmHeaders); usedEngine = 'glm'; } catch { /* next */ }
+    }
+    if (engine === 'grok' && envVar('GROK_API_KEY')) {
+      try { reply = await call(envVar('GROK_API_KEY'), 'https://api.x.ai/v1/chat/completions', 'grok-2-latest'); usedEngine = 'grok'; } catch { /* next */ }
+    }
+    if (!reply && envVar('DEEPSEEK_API_KEY')) {
+      try { reply = await call(envVar('DEEPSEEK_API_KEY'), 'https://api.deepseek.com/chat/completions', 'deepseek-chat'); usedEngine = 'deepseek'; } catch { /* next */ }
+    }
+    if (!reply && engine !== 'glm' && envVar('OPENROUTER_API_KEY')) {
+      try { reply = await call(envVar('OPENROUTER_API_KEY'), 'https://openrouter.ai/api/v1/chat/completions', envVar('OPENROUTER_MODEL') || 'z-ai/glm-5.3-flash', glmHeaders); usedEngine = 'glm'; } catch { /* fallback */ }
+    }
+    if (!reply && engine !== 'grok' && envVar('GROK_API_KEY')) {
+      try { reply = await call(envVar('GROK_API_KEY'), 'https://api.x.ai/v1/chat/completions', 'grok-2-latest'); usedEngine = 'grok'; } catch { /* fallback */ }
+    }
+    if (!reply) return res.status(502).json({ error: 'no engine reachable' });
+    // THE PERSISTENCE TOOL: the corpus seed for the founder's future
+    // training/datacenter — pairs only, no identifiers.
+    agent.recordPair({ at: startedAt, tone, lang, engine: usedEngine, ms: Date.now() - startedAt, before: words, after: reply });
+    res.json({ polished: reply, engine: usedEngine });
+  } catch (e) {
+    console.error('[polish-alpha]', e?.message || e);
+    res.status(500).json({ error: 'polish failed' });
+  }
+});
+
 app.get('/api/rolodex/version', (_req, res) => {
   res.json({
     version: require('../package.json').version || '0.0.0',
