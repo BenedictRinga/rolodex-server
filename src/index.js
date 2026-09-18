@@ -76,6 +76,12 @@ const DeviceState = conn.model('DeviceState', new mongoose.Schema({
   followUpsCount: { type: Number, default: 0 },
   contactNames: { type: [String], default: [] },
   contacts: { type: [mongoose.Schema.Types.Mixed], default: [] }, // full contact list (rolodex-server storage)
+  // 2026-09-18 BUILD 93 THE LOOPS RIDE TOO (founder: "I want to backup my
+  // loops so the date transfers to any other device"): the tray's loops are
+  // device-local UNTIL backend-sync consent — with consent, they ride in the
+  // same payload and restore beside the deck. Same privacy gate as contacts.
+  loopsCount: { type: Number, default: 0 },
+  loops: { type: [mongoose.Schema.Types.Mixed], default: [] },
   sample: { type: mongoose.Schema.Types.Mixed, default: null },
   // 2026-08-19 THE 7-DAY TRIAL: tracked server-side from the device's first
   // sync (first use). Reopenable on demand via /trial/reopen — never auto-renewed.
@@ -1109,7 +1115,7 @@ app.get('/api/rolodex/ai/status', (_req, res) => {
 
 app.post('/api/rolodex/sync', async (req, res) => {
   try {
-    const { deviceId, contacts = [], followUps = [], deviceName = '', room = '', ownerPhone = '', ownerName = '' } = req.body || {};
+    const { deviceId, contacts = [], followUps = [], loops = [], deviceName = '', room = '', ownerPhone = '', ownerName = '' } = req.body || {}; // BUILD 93: the loops ride too
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' });
     // 2026-08-18 THE AGENT'S COURTESY: a brand-new device gets a welcome from
     // LoopKeeper on its very first connection - even free users (trial period).
@@ -1148,6 +1154,9 @@ app.post('/api/rolodex/sync', async (req, res) => {
           // 2026-08-16: the FULL contact list is stored — "rolodex-server" is a
           // real storage location (the app restores from here), not a mirror.
           contacts: (contacts || []).slice(0, 500),
+          // BUILD 93: the loops ride beside the deck (same consent gate).
+          loopsCount: (loops || []).length,
+          loops: (loops || []).slice(0, 500),
           trialStartedAt,
           trialEndsAt,
           sample: {
@@ -1190,6 +1199,9 @@ app.get('/api/rolodex/state/:deviceId', async (req, res) => {
       contactsCount: d.contactsCount,
       followUpsCount: d.followUpsCount,
       contacts: d.contacts || [],
+      // BUILD 93: the loops restore beside the deck.
+      loopsCount: d.loopsCount || 0,
+      loops: d.loops || [],
       trial: {
         startedAt: d.trialStartedAt || null,
         endsAt: d.trialEndsAt || null,
