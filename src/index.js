@@ -1570,6 +1570,110 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
   }
 });
 
+// 2026-09-18 BUILD 91 THE INSPECTION LENS + THE PURGE LEVER (founder: 1.
+// "Inspect the last set of activity/arrivals in loopkeeper - these seem real,
+// although I could wish for much more. Was there activity beyond landing? We
+// need to know" 2. "I wish we could purge the records of those bloat
+// episodes"). Same TESTER_ADMIN_KEY gate as the roster — founder only.
+// INSPECT: the last N hours' arrivals per DEVICE — event count, first/last
+// seen, the event mix, and a BEYOND-LANDING flag (any event other than the
+// passive arrival set). This is the honest answer to "was there activity
+// beyond landing?", per device, no guessing.
+app.get('/api/loopkeeper/analytics/inspect', async (req, res) => {
+  try {
+    const key = String(req.query?.key || '');
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const hours = Math.min(Math.max(Number(req.query?.hours) || 72, 1), 720);
+    const since = new Date(Date.now() - hours * 3600_000);
+    const rows = await AnalyticsEvent.aggregate([
+      { $match: { ts: { $gte: since } } },
+      { $sort: { ts: 1 } },
+      { $group: {
+        _id: '$deviceId',
+        events: { $sum: 1 },
+        first: { $min: '$ts' },
+        last: { $max: '$ts' },
+        mix: { $push: '$event' },
+      } },
+      { $sort: { last: -1 } },
+      { $limit: 200 },
+    ]);
+    const PASSIVE = new Set(['landing_source', 'app_launch', 'session_start', 'session_end', 'machine_reload']);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      generatedAt: new Date().toISOString(),
+      windowHours: hours,
+      devices: rows.map((r) => {
+        const counts = {};
+        for (const e of r.mix) counts[e] = (counts[e] || 0) + 1;
+        const active = Object.keys(counts).filter((e) => !PASSIVE.has(e));
+        return {
+          deviceId: r._id,
+          events: r.events,
+          first: r.first,
+          last: r.last,
+          beyondLanding: active.length > 0,
+          activeEvents: active,
+          mix: counts,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('[analytics/inspect]', err.message);
+    res.status(500).json({ error: 'inspect failed: ' + (err?.message || 'unknown') });
+  }
+});
+
+// PURGE: removes events for the given deviceIds (optionally only before a
+// date), and — with registerNoise — adds those devices to the OWN-FLEET
+// noise list so their future runs never reach the organic line again.
+// dryRun:true previews the counts without deleting anything.
+app.post('/api/loopkeeper/analytics/purge', async (req, res) => {
+  try {
+    const key = String(req.body?.key || '');
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const deviceIds = Array.isArray(req.body?.deviceIds) ? req.body.deviceIds.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
+    const before = req.body?.before ? new Date(String(req.body.before)) : null;
+    if (before && isNaN(before.getTime())) return res.status(400).json({ error: 'bad before date' });
+    if (!deviceIds.length && !before) return res.status(400).json({ error: 'deviceIds and/or before required' });
+    if (deviceIds.length > 200) return res.status(400).json({ error: 'too many deviceIds (max 200)' });
+    const query = {};
+    if (deviceIds.length) query.deviceId = { $in: deviceIds };
+    if (before) query.ts = { $lt: before };
+    const dryRun = !!req.body?.dryRun;
+    const perDevice = deviceIds.length ? await AnalyticsEvent.aggregate([
+      { $match: query },
+      { $group: { _id: '$deviceId', n: { $sum: 1 } } },
+      { $sort: { n: -1 } },
+    ]) : [];
+    let removed = 0;
+    if (!dryRun) {
+      const del = await AnalyticsEvent.deleteMany(query);
+      removed = del.deletedCount || 0;
+      if (req.body?.registerNoise && deviceIds.length) {
+        for (const id of deviceIds) noiseDevices.add(id);
+        try {
+          fs.mkdirSync(path.dirname(NOISE_FILE), { recursive: true });
+          fs.writeFileSync(NOISE_FILE, JSON.stringify([...noiseDevices], null, 2));
+        } catch { /* best effort persistence */ }
+      }
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      dryRun,
+      removed: dryRun ? perDevice.reduce((t, r) => t + (r.n || 0), 0) : removed,
+      perDevice,
+      registeredNoise: !dryRun && req.body?.registerNoise ? deviceIds.length : 0,
+    });
+  } catch (err) {
+    console.error('[analytics/purge]', err.message);
+    res.status(500).json({ error: 'purge failed: ' + (err?.message || 'unknown') });
+  }
+});
+
 // 2026-08-30 BUILD 47 OWN-FLEET ADMIN — same TESTER_ADMIN_KEY gate as the
 // roster. The founder lists deviceIds that are NOT the market (dev browsers,
 // test rigs, beta rigs): GET reads the list (with a 30d-activity count per
