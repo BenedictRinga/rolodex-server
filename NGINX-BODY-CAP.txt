@@ -1,0 +1,16 @@
+# BUILD 270 (rolodex-server): THE SYNC BODY CAP — measured 2026-09-18.
+#
+# The founder's 84-card deck (with base64 photo/video covers) pushes a
+# multi-MB JSON body. nginx's DEFAULT client_max_body_size is 1 MB:
+# measured live — 512 KB -> HTTP 200; 1.5 MB / 4 MB / 9 MB -> HTTP 413
+# Request Entity Too Large. EVERY push from a real deck died at the door.
+#
+# THE FIX (run on the droplet, once — the app now also sheds covers when
+# the payload would blow the cap, but the raised cap lets full decks ride):
+#
+#   sudo nano /etc/nginx/sites-available/rolodex
+#     (inside the server { } block that serves rolodex/loopkeeper):
+#       client_max_body_size 32M;
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Verified after reload: the 1.5/4/9 MB probes above must all return 200.
