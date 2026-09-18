@@ -1000,6 +1000,52 @@ app.post('/api/rolodex/crashes', (req, res) => {
   }
 });
 
+// 2026-09-18 BUILD 92 THE CRASH LENS (founder: "This app has been crashing
+// for 5 days now despite several efforts to diagnose and fix it. It often
+// happens after it becomes visible again after a few minutes gap"): the
+// ledger was SSH-only; the founder reads it here now. TESTER_ADMIN_KEY
+// gated. Returns the last N crashes grouped by type+msg signature with
+// recency, so the visibility-resume pattern can be seen, not guessed.
+app.get('/api/rolodex/crashes/recent', (req, res) => {
+  try {
+    const key = String(req.query?.key || '');
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const limit = Math.min(Math.max(Number(req.query?.limit) || 60, 1), 500);
+    let rows = [];
+    try {
+      rows = fs.readFileSync(CRASHES_FILE, 'utf8').trim().split('\n').filter(Boolean)
+        .slice(-limit).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    } catch { rows = []; }
+    const groups = {};
+    for (const r of rows) {
+      const sig = `${r.type}|${String(r.msg || '').slice(0, 120)}`;
+      const g = groups[sig] || (groups[sig] = { type: r.type, msg: String(r.msg || '').slice(0, 120), count: 0, first: r.receivedAt, last: r.receivedAt, pages: new Set(), vers: new Set(), sample: r });
+      g.count++;
+      g.last = r.receivedAt;
+      if (r.page) g.pages.add(r.page);
+      if (r.ver) g.vers.add(r.ver);
+    }
+    const byDay = {};
+    for (const r of rows) {
+      const day = String(r.receivedAt || '').slice(0, 10);
+      byDay[day] = (byDay[day] || 0) + 1;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({
+      ok: true,
+      total: rows.length,
+      byDay,
+      groups: Object.values(groups)
+        .sort((a, b) => (a.last < b.last ? 1 : -1))
+        .map((g) => ({ ...g, pages: [...g.pages].slice(0, 5), vers: [...g.vers].slice(0, 8), sample: { stack: g.sample.stack, plat: g.sample.plat, ver: g.sample.ver, ua: g.sample.ua } })),
+    });
+  } catch (err) {
+    console.error('[crashes/view]', err.message);
+    res.status(500).json({ error: 'view failed' });
+  }
+});
+
 
 // 2026-08-18 CHAT AWARENESS: is this number a Rolodex user? The sender's app
 // consults this BEFORE sending, so it can tell the truth - the message lands
