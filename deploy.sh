@@ -12,31 +12,19 @@ cd "$DEPLOY_DIR" || exit 1
 
 # Function to manage version — same pattern as /opt/zyppar-server/update.sh
 manage_version() {
-    local version_file="version.txt"
-    local default_version="1.0.0" # Fallback version if file is missing
-    local new_version="$1" # Optional: Specific version to set (e.g., 1.0.0)
-
-    # Read current version
-    if [ -f "$version_file" ]; then
-        current_version=$(cat "$version_file" | tr -d '[:space:]')
-    else
-        current_version="$default_version"
-        echo "Warning: $version_file not found, using default version $default_version"
+    # 2026-09-18 BUILD 95 RETIRED AS A SOURCE: the advertised version now
+    # COMPOSES from THIS repo's package.json build counter (0.3.<build>) in
+    # /updates/check and /version (updates.service.js + index.js). The
+    # build counter is GIT-TRACKED, so the `git reset --hard` above already
+    # brings the right one — an argless deploy carries the correct version
+    # automatically, and version.txt is unread (kept only as a harmless log).
+    # A deliberate minor bump (0.4.0) now belongs IN THE REPO: bump
+    # package.json "version" (and the app's environment.version base pair),
+    # commit, deploy — no ./deploy.sh argument reaches anything anymore.
+    echo "version.txt retired as a version source (server build 95); the advertised version composes from package.json build."
+    if [ -n "$1" ]; then
+        echo "NOTE: the explicit version argument '$1' no longer changes the advertised version — bump package.json 'version' + 'build' in the repo instead."
     fi
-
-    # If a specific version is provided, use it
-    if [ -n "$new_version" ]; then
-        echo "$new_version" > "$version_file"
-        echo "Set version.txt to $new_version"
-        return
-    fi
-
-    # Otherwise, increment patch version
-    IFS='.' read -r major minor patch <<< "$current_version"
-    patch=$((patch + 1))
-    new_version="${major}.${minor}.${patch}"
-    echo "$new_version" > "$version_file"
-    echo "Incremented version.txt to $new_version"
 }
 
 echo "Resetting local changes and pulling updates from origin main..."

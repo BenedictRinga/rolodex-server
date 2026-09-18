@@ -706,9 +706,13 @@ app.post('/api/loopkeeper/polish-alpha', async (req, res) => {
 });
 
 app.get('/api/rolodex/version', (_req, res) => {
+  // 2026-09-18 BUILD 94 THE VERSION THAT TICKS: this route composes from the
+  // build counter too (0.3.<build>) — the static package.json "version"
+  // ("0.3.1", our first-draft string) never ruled a display anywhere.
+  const b = Number(require('../package.json').build) || 0;
   res.json({
-    version: require('../package.json').version || '0.0.0',
-    build: Number(require('../package.json').build) || 0,
+    version: '0.3.' + b,
+    build: b,
     at: new Date().toISOString(),
   });
 });
