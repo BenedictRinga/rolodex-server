@@ -213,7 +213,7 @@ const TranslationSuggestion = conn.model('TranslationSuggestion', new mongoose.S
 }, { timestamps: true }));
 
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '32mb' })); // BUILD 96: matches the raised nginx body cap - gzipped sync payloads inflate here
 
 // 2026-08-20 CORS: the PWA lives on zyppar.com/rolodex but the API may be
 // called from localhost dev or a different origin — update checks (and every
