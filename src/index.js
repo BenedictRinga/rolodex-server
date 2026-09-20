@@ -1339,6 +1339,7 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
     // and serve the most recent PRIOR day as the server-side "what changed"
     // baseline. A brand-new device gets the full picture on its first visit.
     try {
+      void backfillCapsule();
       const dayKeyOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
       const nowDate = new Date();
       const todayKey = dayKeyOf(nowDate);
@@ -1980,6 +1981,116 @@ app.post('/api/rolodex/translations/merge', async (req, res) => {
 
 async function analyticsDistinctDevices(since) {
   return AnalyticsEvent.distinct('deviceId', { ts: { $gte: since } });
+}
+
+// 2026-09-20 BUILD 100 THE CAPSULE BACKFILL (founder: "Check logs to see if
+// any progress at all. Some logs still do not show percentage changes"): the
+// ledger started the day build 99 deployed, so prev was NULL and every
+// "what changed" chip was dark. The RAW events are retained in Mongo — so the
+// past 90 days of headline numbers are RECONSTRUCTED from them: per day, the
+// distinct devices (dau), the rolling 7/30-day distinct sets (wau/mau), the
+// rolling session counts, the rolling average session, and the rolling share
+// count. Totals (contacts/followUps) are current-state only and stay absent —
+// the app renders no chip without a real baseline. Each reconstructed day is
+// marked reconstructed: true.
+let capsuleBackfilled = false;
+async function backfillCapsule() {
+  if (capsuleBackfilled) return;
+  capsuleBackfilled = true;
+  try {
+    const count = await SummarySnapshot.estimatedDocumentCount();
+    if (count >= 2) return; // the ledger already stands — nothing to fill
+    const d = 24 * 3600_000;
+    const now = Date.now();
+    const since = new Date(now - 95 * d);
+    // The noise set, replicated from the summary's own rule: the env list,
+    // the founder-maintained file, and every device that ever carried a
+    // numeric testerId.
+    const noise = new Set(String(envVar('LK_NOISE_DEVICES') || '').split(',').map((x) => x.trim()).filter(Boolean));
+    for (const id of noiseDevices) noise.add(id);
+    try {
+      const testerRows = await AnalyticsEvent.aggregate([
+        { $match: { 'props.testerId': { $type: 'number', $gt: 0 } } },
+        { $group: { _id: '$deviceId' } },
+      ]);
+      for (const r of testerRows) if (r._id) noise.add(String(r._id));
+    } catch { /* the file/env lists still apply */ }
+    const rows = await AnalyticsEvent.find({
+      ts: { $gte: since },
+      deviceId: { $nin: [...noise] },
+    }).select('event ts deviceId props.duration').lean();
+    const dayKeyOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    // Per-day buckets.
+    const days = new Map(); // key -> { devices:Set, sessionStarts:number[], durations:number[] }
+    for (const e of rows) {
+      if (!e.ts) continue;
+      const key = dayKeyOf(new Date(e.ts));
+      if (!days.has(key)) days.set(key, { devices: new Set(), sessionStarts: 0, durations: [] });
+      const b = days.get(key);
+      if (e.deviceId) b.devices.add(String(e.deviceId));
+      if (e.event === 'session_start') b.sessionStarts += 1;
+      if (e.event === 'session_end' && Number(e.props?.duration) > 0) b.durations.push(Number(e.props.duration));
+    }
+    const deviceDay = new Map(); // deviceId -> Set<dayKey> (for the rolling distinct sets)
+    for (const [key, b] of days) for (const dev of b.devices) {
+      if (!deviceDay.has(dev)) deviceDay.set(dev, new Set());
+      deviceDay.get(dev).add(key);
+    }
+    const sortedKeys = [...days.keys()].sort();
+    const keySet = new Set(sortedKeys);
+    const allKeys = [];
+    for (let t = now - 90 * d; t < now; t += d) allKeys.push(dayKeyOf(new Date(t)));
+    const rolling = (key, span) => {
+      // distinct devices with an event in [key-span+1 .. key]
+      const idx = allKeys.indexOf(key);
+      if (idx < 0) return 0;
+      const window = new Set(allKeys.slice(Math.max(0, idx - span + 1), idx + 1));
+      let n = 0;
+      for (const [dev, set] of deviceDay) { for (const k of set) { if (window.has(k)) { n += 1; break; } } }
+      return n;
+    };
+    const rollCount = (key, span, pick) => {
+      const idx = allKeys.indexOf(key);
+      if (idx < 0) return 0;
+      let n = 0;
+      for (const k of allKeys.slice(Math.max(0, idx - span + 1), idx + 1)) n += pick(days.get(k)) || 0;
+      return n;
+    };
+    const rollAvg = (key, span) => {
+      const idx = allKeys.indexOf(key);
+      if (idx < 0) return 0;
+      const all = [];
+      for (const k of allKeys.slice(Math.max(0, idx - span + 1), idx + 1)) {
+        const b = days.get(k); if (b) all.push(...b.durations);
+      }
+      return all.length ? Math.round(all.reduce((x, y) => x + y, 0) / all.length) : 0;
+    };
+    let filled = 0;
+    for (const key of allKeys) {
+      if (keySet.has(key)) continue; // a real snapshot already stands
+      const b = days.get(key);
+      const digest = {
+        generatedAt: new Date(key + 'T23:59:59Z').toISOString(),
+        analytics: {
+          dau: b ? b.devices.size : 0,
+          wau: rolling(key, 7),
+          mau: rolling(key, 30),
+          sessions: { last24h: b ? b.sessionStarts : 0, last7d: rollCount(key, 7, (x) => x?.sessionStarts), last30d: rollCount(key, 30, (x) => x?.sessionStarts) },
+          avgSessionSeconds: rollAvg(key, 30),
+          shares: { total30d: 0 },
+          inviteIssues: { last24h: 0, last7d: 0, last30d: 0 },
+          reconstructed: true,
+        },
+        reconstructed: true,
+      };
+      await SummarySnapshot.findOneAndUpdate({ date: key }, { $set: { payload: digest } }, { upsert: true });
+      filled += 1;
+    }
+    console.log('[capsule/backfill] reconstructed ' + filled + ' days from the retained events');
+  } catch (err) {
+    console.error('[capsule/backfill]', err.message);
+    capsuleBackfilled = false; // let the next request try again
+  }
 }
 
 async function computeAnalyticsSummary() {
