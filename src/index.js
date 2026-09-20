@@ -200,6 +200,20 @@ const AnalyticsEvent = conn.model('AnalyticsEvent', new mongoose.Schema({
   ts: { type: Date, default: Date.now, index: true },
 }, { timestamps: true }));
 
+// 2026-09-20 BUILD 99 THE TIME CAPSULE (founder: "those logs used for
+// Investor portal and CommandCenter should maintain at backend for last 90
+// days always, like macbook's time capsule. Otherwise, on a new device, an
+// investor sees nothing, until fresh records build. Fails the usefulness
+// test."): a per-day snapshot of the investor summary's headline numbers,
+// kept 90 days. ANY device — first visit included — reads the previous day's
+// numbers as the "what changed" baseline; no investor ever meets an empty
+// ledger. Numbers only; the payload is the same anonymous digest the portal
+// already renders.
+const SummarySnapshot = conn.model('SummarySnapshot', new mongoose.Schema({
+  date: { type: String, required: true, unique: true }, // YYYY-MM-DD
+  payload: { type: mongoose.Schema.Types.Mixed, default: {} },
+}, { timestamps: true }));
+
 // 2026-08-25 COMMUNITY TRANSLATIONS — anonymous translation suggestions from
 // the in-app Help Translate portal. No email, no name, no device id: only the
 // language code + the keys the user chose to improve. Approved=false until a
@@ -1287,8 +1301,7 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
       followUpsCount: d.followUpsCount || 0,
       recentNames: (d.contactNames || []).slice(0, 4),
     }));
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({
+    const summary = {
       generatedAt: new Date().toISOString(),
       totals: {
         // 2026-09-15 BUILD 78 (Grok review gap 5): totals.devices was a bare
@@ -1319,7 +1332,29 @@ app.get('/api/rolodex/investor/summary', async (_req, res) => {
           .select('lang keys createdAt')
           .lean(),
       },
-    });
+    };
+    // ── 2026-09-20 BUILD 99 THE TIME CAPSULE ──────────────────────────────
+    // Upsert today's snapshot (the headline digest only — totals + analytics;
+    // the heavy render arrays never enter the ledger), prune past 90 days,
+    // and serve the most recent PRIOR day as the server-side "what changed"
+    // baseline. A brand-new device gets the full picture on its first visit.
+    try {
+      const dayKeyOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      const nowDate = new Date();
+      const todayKey = dayKeyOf(nowDate);
+      const digest = { generatedAt: new Date().toISOString(), totals: summary.totals, analytics: summary.analytics };
+      await SummarySnapshot.findOneAndUpdate({ date: todayKey }, { $set: { payload: digest } }, { upsert: true });
+      const cutoffKey = dayKeyOf(new Date(nowDate.getTime() - 90 * 24 * 3600_000));
+      await SummarySnapshot.deleteMany({ date: { $lt: cutoffKey } });
+      const prior = await SummarySnapshot.findOne({ date: { $lt: todayKey } }).sort({ date: -1 }).lean();
+      summary.prev = prior?.payload || null;
+      summary.capsuleDate = prior?.date || null;
+    } catch (capsuleErr) {
+      console.error('[rolodex/summary/capsule]', capsuleErr.message);
+      summary.prev = null;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(summary);
   } catch (err) {
     console.error('[rolodex/investor/summary]', err.message);
     res.status(500).json({ error: 'summary failed: ' + (err?.message || 'unknown') });
