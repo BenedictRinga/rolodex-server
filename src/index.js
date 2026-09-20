@@ -2602,6 +2602,48 @@ async function computeAnalyticsSummary() {
     recentTesters = testerDeviceIds.length ? await fetchRecentDevices({ $in: testerDeviceIds }) : [];
   } catch { /* a cold aggregate never kills the summary */ }
 
+  // ── 2026-09-20 BUILD 101 THE NEW-USER RECORD (founder: "I still do not
+  // see a reference record for most recent 5 new users, and other stats
+  // requested alongside... I see a suggestion of 4 DAU since my last check.
+  // Either they are repeat or they are new, is unclear.") ──────────────────
+  // Per-device FIRST-seen timestamps answer both: recentNewUsers = the five
+  // most recent organic devices SEEN FOR THE FIRST TIME (with trails), and
+  // dauSplit breaks today's DAU into new (first event within 24h) vs
+  // returning (presented in the portal and the console beside DAU).
+  let recentNewUsers = [];
+  let dauSplit = null;
+  try {
+    const firstSeens = await AnalyticsEvent.aggregate([
+      { $match: { deviceId: { $nin: [...organicArr, ''] } } },
+      { $group: { _id: '$deviceId', first: { $min: '$ts' }, last: { $max: '$ts' }, total: { $sum: 1 } } },
+    ]);
+    const firstMap = new Map(firstSeens.map((r) => [String(r._id), r.first]));
+    const dauNew = (Array.isArray(dau) ? dau : []).filter((id) => {
+      const f = firstMap.get(String(id));
+      return f && new Date(f).getTime() >= dayAgo.getTime();
+    }).length;
+    dauSplit = { new: dauNew, returning: Math.max(0, (dau?.length || 0) - dauNew) };
+    const newest = firstSeens
+      .filter((r) => r._id)
+      .sort((a, b) => new Date(b.first).getTime() - new Date(a.first).getTime())
+      .slice(0, 5);
+    for (const r of newest) {
+      const evs = await AnalyticsEvent.find({ deviceId: r._id }).sort({ ts: -1 }).limit(40).select('event ts props').lean();
+      recentNewUsers.push({
+        id: String(r._id),
+        firstSeen: r.first ? new Date(r.first).toISOString() : null,
+        lastSeen: r.last ? new Date(r.last).toISOString() : null,
+        total: r.total || 0,
+        events: evs.map((e) => ({
+          ev: e.event,
+          at: e.ts ? new Date(e.ts).toISOString() : null,
+          page: e.props?.page || undefined,
+          dur: e.event === 'session_end' && Number(e.props?.duration) > 0 ? Math.round(Number(e.props.duration)) : undefined,
+        })),
+      });
+    }
+  } catch { /* a cold aggregate never kills the summary */ }
+
   return {
     // 2026-08-30 BUILD 47: the top line is ORGANIC — own-fleet (dev + tester)
     // devices are counted separately in ownFleet, never mixed in.
@@ -2632,6 +2674,8 @@ async function computeAnalyticsSummary() {
     knownDevices, // 2026-09-15 BUILD 79: THE DEVICE CATCHER — the noise-list roster
     recentUsers, // BUILD 98: THE LAST THREE — the three most recent ORGANIC devices, tap-to-reveal trails
     recentTesters, // BUILD 98: the three most recent TESTER devices, also visible
+    recentNewUsers, // BUILD 101: THE REFERENCE RECORD — the five most recent FIRST-SEEN organic devices, trails included
+    dauSplit, // BUILD 101: today's DAU split into new vs returning — the repeat question answered in place
     inviteIssues: {
       last24h: inviteIssues24h,
       last7d: inviteIssues7d,
