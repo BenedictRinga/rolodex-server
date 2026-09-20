@@ -2410,33 +2410,32 @@ async function computeAnalyticsSummary() {
     }));
   } catch { /* a cold aggregate never kills the summary */ }
 
-  // 2026-09-20 BUILD 97 THE LAST THREE (founder: "a specific section that
-  // captures our most recent 3 users, with tap and reveal granularity on
-  // what they touched, and for how long"). THE PHANTOM QUESTION'S INSTRUMENT:
-  // the organic meters exclude the own fleet by design, so the founder's own
-  // testing never moves them — a per-device lens ENDS the guesswork. The
-  // three most recently active devices, ANY fleet (own-fleet and tester rows
-  // are tagged), each with its last 40 events (event + timestamp + page path
-  // where present) and the session durations the stream already carries.
+  // 2026-09-20 BUILD 97 THE LAST THREE, REFINED BUILD 98 (founder: "Make
+  // the last 3 separate from testers, which we can also see" + the stats
+  // confusion: "I absolutely did not initiate the activities in question").
+  // TWO lists now — recentUsers = the three most recently active ORGANIC
+  // devices (not the founder's, not testers: real users — the organic meters
+  // never carried the founder's or testers' activity), recentTesters = the
+  // three most recently active tester devices, also visible. Tap-and-reveal
+  // granularity: the last 40 events per device (event + timestamp + page
+  // path where present) and the session durations the stream carries.
   // Anonymous ids only — the privacy contract holds.
-  let recentUsers = [];
-  try {
-    const recentRaw = await AnalyticsEvent.aggregate([
-      { $match: { deviceId: { $nin: [''] } } },
+  const fetchRecentDevices = async (deviceFilter) => {
+    const rows = await AnalyticsEvent.aggregate([
+      { $match: { deviceId: deviceFilter } },
       { $group: { _id: '$deviceId', lastSeen: { $max: '$ts' }, total: { $sum: 1 } } },
       { $sort: { lastSeen: -1 } },
       { $limit: 3 },
     ]);
-    for (const r of recentRaw) {
+    const out = [];
+    for (const r of rows) {
       const evs = await AnalyticsEvent.find({ deviceId: r._id })
         .sort({ ts: -1 }).limit(40)
         .select('event ts props').lean();
-      recentUsers.push({
+      out.push({
         id: String(r._id || ''),
         lastSeen: r.lastSeen ? new Date(r.lastSeen).toISOString() : null,
         total: r.total || 0,
-        ownFleet: noise.has(String(r._id || '')),
-        tester: ((r._id && testerDeviceIds.includes(r._id)) || false),
         events: evs.map((e) => ({
           ev: e.event,
           at: e.ts ? new Date(e.ts).toISOString() : null,
@@ -2445,6 +2444,16 @@ async function computeAnalyticsSummary() {
         })),
       });
     }
+    return out;
+  };
+  let recentUsers = [];
+  let recentTesters = [];
+  try {
+    recentUsers = await fetchRecentDevices({ $nin: [...organicArr, ''] });
+  } catch { /* a cold aggregate never kills the summary */ }
+  try {
+    // Tester devices only; an empty roster matches nothing by construction.
+    recentTesters = testerDeviceIds.length ? await fetchRecentDevices({ $in: testerDeviceIds }) : [];
   } catch { /* a cold aggregate never kills the summary */ }
 
   return {
@@ -2475,7 +2484,8 @@ async function computeAnalyticsSummary() {
     landingSources: landingSources.map((s) => ({ ref: s._id || 'direct', count: s.count })), // BUILD 73: once-per-device referrer attribution
     channelExits, // 2026-09-14 BUILD 74: door taps vs deeds per channel (30d)
     knownDevices, // 2026-09-15 BUILD 79: THE DEVICE CATCHER — the noise-list roster
-    recentUsers, // 2026-09-20 BUILD 97: THE LAST THREE — most recent devices, tap-to-reveal event trails
+    recentUsers, // BUILD 98: THE LAST THREE — the three most recent ORGANIC devices, tap-to-reveal trails
+    recentTesters, // BUILD 98: the three most recent TESTER devices, also visible
     inviteIssues: {
       last24h: inviteIssues24h,
       last7d: inviteIssues7d,

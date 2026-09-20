@@ -31,3 +31,12 @@ single source of truth for what the Confidante knows about RolodexAI.
 - Frontend Settings list (`rolodex-app/src/app/components/rolodex/rolodex.component.html`)
 - Frontend About/Investors copy (`rolodex-app/src/app/components/about-rolodex/`)
 - `package.json` `build` in BOTH repos
+
+## No safety assurances (2026-09-20, founder — standing policy)
+We do NOT give users assurances of safety or privacy in copy — the true test
+is conduct: no one, not even an AI, can catch LoopKeeper secretly collecting
+data a user did not volunteer. State facts about behavior, never reassurance
+framings ("safe", "secure", "your data stays yours", "nothing knows you").
+This binds the chat directive, portal payloads, and every server-generated
+string. We win the ambiguity by action; the lack of incentives is the true
+measure of likely behavior.
