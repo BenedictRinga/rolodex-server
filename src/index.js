@@ -1727,6 +1727,46 @@ app.get('/api/loopkeeper/analytics/inspect', async (req, res) => {
 // date), and — with registerNoise — adds those devices to the OWN-FLEET
 // noise list so their future runs never reach the organic line again.
 // dryRun:true previews the counts without deleting anything.
+// 2026-09-20 BUILD 103 THE WRITE COMMAND (founder: "When I mark my device Id
+// in CommandCenter 07, why must I copy and paste it to .env when a command
+// should do it. Write it into the .env."): one tap in the console registers
+// the devices — the noise FILE (restart-proof) AND the .env LK_NOISE_DEVICES
+// line are written HERE; the in-memory set updates at once, so the meters
+// exclude the devices immediately, no restart required.
+app.post('/api/loopkeeper/ownfleet/noise', async (req, res) => {
+  try {
+    const key = String(req.body?.key || '');
+    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
+    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const deviceIds = Array.isArray(req.body?.deviceIds) ? req.body.deviceIds.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
+    if (!deviceIds.length) return res.status(400).json({ error: 'deviceIds required' });
+    if (deviceIds.length > 200) return res.status(400).json({ error: 'too many deviceIds (max 200)' });
+    for (const id of deviceIds) noiseDevices.add(id);
+    saveNoiseDevices();
+    // THE .ENV WRITE: replace the LK_NOISE_DEVICES line, or append it.
+    const envPath = path.join(__dirname, '..', '.env');
+    let envText = '';
+    try { envText = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : ''; } catch { /* start fresh */ }
+    const merged = [...new Set([
+      ...String(envVar('LK_NOISE_DEVICES') || '').split(',').map((x) => x.trim()).filter(Boolean),
+      ...deviceIds,
+    ])];
+    const line = 'LK_NOISE_DEVICES=' + merged.join(',');
+    if (/^LK_NOISE_DEVICES=.*$/m.test(envText)) {
+      envText = envText.replace(/^LK_NOISE_DEVICES=.*$/m, line);
+    } else {
+      envText = (envText && !envText.endsWith('\n') ? envText + '\n' : '') + line + '\n';
+    }
+    fs.writeFileSync(envPath, envText, 'utf8');
+    console.log('[ownfleet/noise] registered ' + deviceIds.length + ' device(s) — file + .env written (' + merged.length + ' total)');
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ok: true, registered: deviceIds.length, total: merged.length, note: 'the meters exclude these devices immediately — no restart needed; the .env line keeps it across restarts' });
+  } catch (err) {
+    console.error('[ownfleet/noise]', err.message);
+    res.status(500).json({ error: 'noise write failed: ' + (err?.message || 'unknown') });
+  }
+});
+
 app.post('/api/loopkeeper/analytics/purge', async (req, res) => {
   try {
     const key = String(req.body?.key || '');
