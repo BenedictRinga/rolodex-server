@@ -2157,8 +2157,16 @@ async function computeAnalyticsSummary() {
   const sessions7d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: weekAgo }, deviceId: { $nin: organicArr } });
   const sessions30d = await AnalyticsEvent.countDocuments({ event: 'session_start', ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } });
 
+  // 2026-09-20 BUILD 102 THE PARKED-TAB CAP (founder: "Is average sessions
+  // generating data in error? It keeps incrementing even though nothing else
+  // in stats are"): a session_end whose duration exceeds TWO HOURS is a
+  // parked browser tab, not a human session — measured live: one 205,876s
+  // (57-hour) tab was dragging the rolling average up on its own. Sessions
+  // over the cap are EXCLUDED from the average (the raw trail still shows
+  // them; nothing is deleted).
+  const SESSION_PARKED_CAP_SECONDS = 7200;
   const [avgSession] = await AnalyticsEvent.aggregate([
-    { $match: { event: 'session_end', 'props.duration': { $gt: 0 }, ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } } },
+    { $match: { event: 'session_end', 'props.duration': { $gt: 0, $lt: SESSION_PARKED_CAP_SECONDS }, ts: { $gte: monthAgo }, deviceId: { $nin: organicArr } } },
     { $group: { _id: null, avg: { $avg: '$props.duration' }, count: { $sum: 1 } } },
   ]);
 
