@@ -663,7 +663,11 @@ app.post('/api/rolodex/chat', async (req, res) => {
 // datacenter). The agent polishes THE USER'S OWN WORDS into the requested
 // tone — meaning, names and facts intact — and every pair lands in
 // data/polish-alpha.jsonl (no identifiers; the corpus seed lives only here).
-app.post('/api/loopkeeper/polish-alpha', async (req, res) => {
+// 2026-09-22 BUILD 107 THE PATH FIX (the onboarding stress test found it:
+// registered at the loopkeeper path, which the alias middleware rewrites to
+// /api/rolodex/* BEFORE routes match — 404 from birth, silently masked by
+// the app's on-device fallback). Registered at the internal canonical path.
+app.post('/api/rolodex/polish-alpha', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const startedAt = Date.now();
   try {
