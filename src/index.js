@@ -1733,7 +1733,12 @@ app.get('/api/loopkeeper/analytics/inspect', async (req, res) => {
 // the devices — the noise FILE (restart-proof) AND the .env LK_NOISE_DEVICES
 // line are written HERE; the in-memory set updates at once, so the meters
 // exclude the devices immediately, no restart required.
-app.post('/api/loopkeeper/ownfleet/noise', async (req, res) => {
+// 2026-09-20 BUILD 104 THE PATH FIX (probe-proven: "Cannot POST /api/rolodex/
+// ownfleet/noise"): routes are registered at the INTERNAL canonical path —
+// the alias middleware rewrites incoming /api/loopkeeper/* to /api/rolodex/*
+// BEFORE routes match, so a route registered at the loopkeeper path can never
+// fire. 103's loopkeeper-path registration was shadowed from birth.
+app.post('/api/rolodex/ownfleet/noise', async (req, res) => {
   try {
     const key = String(req.body?.key || '');
     const expected = String(envVar('TESTER_ADMIN_KEY') || '');
