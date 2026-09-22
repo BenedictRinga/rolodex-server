@@ -2716,18 +2716,27 @@ async function computeAnalyticsSummary() {
   // device per 14 days'): ORGANIC devices that sent at least one REAL message
   // in the trailing 14 days, and the average message_sent per SENDING device
   // over the same window. The one number the product lives or dies by.
-  const growthFrom = new Date(now - 14 * d);
-  const growthSenders14d = (await AnalyticsEvent.distinct('deviceId', { event: 'message_sent', ts: { $gte: growthFrom }, deviceId: { $nin: organicArr } })).length;
-  const growthMsgRows = await AnalyticsEvent.aggregate([
-    { $match: { event: 'message_sent', ts: { $gte: growthFrom }, deviceId: { $nin: organicArr } } },
-    { $group: { _id: '$deviceId', n: { $sum: 1 } } },
-  ]);
-  const growthLoop = {
-    windowDays: 14,
-    senders: growthSenders14d,
-    messages: growthMsgRows.reduce((s, r) => s + r.n, 0),
-    avgPerSendingDevice: growthMsgRows.length ? Math.round((growthMsgRows.reduce((s, r) => s + r.n, 0) / msgRows.length) * 100) / 100 : 0,
-  };
+  // BUILD 121 FIX (founder: 'The log analysis access to backend is broken:
+  // 500'): `now` did not exist in this scope — ReferenceError killed the
+  // whole summary — and the avg line still read the renamed-away
+  // msgRows.length. Date.now() + growthMsgRows.length, and the block now
+  // runs guarded like the cold aggregates around it (the meter may come
+  // back null rather than take the summary down).
+  let growthLoop = null;
+  try {
+    const growthFrom = new Date(Date.now() - 14 * d);
+    const growthSenders14d = (await AnalyticsEvent.distinct('deviceId', { event: 'message_sent', ts: { $gte: growthFrom }, deviceId: { $nin: organicArr } })).length;
+    const growthMsgRows = await AnalyticsEvent.aggregate([
+      { $match: { event: 'message_sent', ts: { $gte: growthFrom }, deviceId: { $nin: organicArr } } },
+      { $group: { _id: '$deviceId', n: { $sum: 1 } } },
+    ]);
+    growthLoop = {
+      windowDays: 14,
+      senders: growthSenders14d,
+      messages: growthMsgRows.reduce((s, r) => s + r.n, 0),
+      avgPerSendingDevice: growthMsgRows.length ? Math.round((growthMsgRows.reduce((s, r) => s + r.n, 0) / growthMsgRows.length) * 100) / 100 : 0,
+    };
+  } catch { /* the growth meter never kills the summary */ }
 
   return {
     // 2026-08-30 BUILD 47: the top line is ORGANIC — own-fleet (dev + tester)
