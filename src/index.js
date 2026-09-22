@@ -275,6 +275,9 @@ app.use((req, _res, next) => {
 // version.txt (the app's apiBase is /api/loopkeeper; /api/openloop/updates
 // still reaches this route through the alias middleware above).
 const updateRoutes = require('./routes/updates.routes.js');
+// 2026-09-20 BUILD 106: the admin secret's ONE home — every key-gated
+// endpoint gates through config.checkAdminKey (never the env inline).
+const config = require('./config');
 app.use('/api/rolodex/updates', updateRoutes);
 
 app.get('/api/rolodex/health', (_req, res) => {
@@ -1033,8 +1036,8 @@ app.post('/api/rolodex/crashes', (req, res) => {
 app.get('/api/rolodex/crashes/recent', (req, res) => {
   try {
     const key = String(req.query?.key || '');
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const gate = config.checkAdminKey(key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const limit = Math.min(Math.max(Number(req.query?.limit) || 60, 1), 500);
     let rows = [];
     try {
@@ -1532,9 +1535,9 @@ app.post('/api/rolodex/tester/visit', async (req, res) => {
 // the FIRST time the link went out).
 app.post('/api/rolodex/tester/invited', async (req, res) => {
   try {
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    const key = String(req.body?.key || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    // 2026-09-20 BUILD 106: gated through config like every sibling.
+    const gate = config.checkAdminKey(req.body?.key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const code = Number(req.body?.code);
     const slot = TESTER_CODES.indexOf(code);
     if (!code || slot < 0) return res.status(404).json({ error: 'unknown code' });
@@ -1561,8 +1564,8 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
     // 2026-08-28 FIX: must go through envVar() like every other secret —
     // process.env alone never sees the repo .env file (no dotenv), so the
     // founder's TESTER_ADMIN_KEY=... line was silently ignored (401 forever).
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const gate = config.checkAdminKey(key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const [accepts, days, feedbacks, invites, visits] = await Promise.all([
       TesterAccept.find({}).lean(),
       TesterDay.find({}).lean(),
@@ -1680,8 +1683,8 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
 app.get('/api/loopkeeper/analytics/inspect', async (req, res) => {
   try {
     const key = String(req.query?.key || '');
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const gate = config.checkAdminKey(key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const hours = Math.min(Math.max(Number(req.query?.hours) || 72, 1), 720);
     const since = new Date(Date.now() - hours * 3600_000);
     const rows = await AnalyticsEvent.aggregate([
@@ -1741,21 +1744,12 @@ app.get('/api/loopkeeper/analytics/inspect', async (req, res) => {
 app.post('/api/rolodex/ownfleet/noise', async (req, res) => {
   try {
     const key = String(req.body?.key || '');
-    // 2026-09-20 BUILD 105 THE TWO KEYS (founder: section 07 said "Key
-    // rejected" — the admin key and the word they actually know are not the
-    // same secret): the write accepts EITHER the TESTER_ADMIN_KEY value OR
-    // the INVESTOR_KEY portal word (case-insensitive, like /investor/verify).
-    // Both gate founder-only surfaces; neither is a user secret.
-    const adminKey = String(envVar('TESTER_ADMIN_KEY') || '');
-    const portalWord = String(envVar('INVESTOR_KEY') || '');
-    const keyOk = !!adminKey && key === adminKey;
-    const wordOk = !!portalWord && key.toLowerCase() === portalWord.toLowerCase();
-    if (!keyOk && !wordOk) {
-      if (!adminKey && !portalWord) {
-        return res.status(500).json({ error: 'No gate key is configured on the server — set TESTER_ADMIN_KEY or INVESTOR_KEY in .env' });
-      }
-      return res.status(401).json({ error: 'forbidden — use the TESTER_ADMIN_KEY value or the Investors portal word' });
-    }
+    // 2026-09-20 BUILD 106 THE REVERT (founder: the TESTER_ADMIN_KEY is
+    // "completely different from Investors portal key which is local device
+    // based"): the write gates on the ADMIN KEY ONLY, through config — the
+    // portal word is never an admin credential.
+    const gate = config.checkAdminKey(key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const deviceIds = Array.isArray(req.body?.deviceIds) ? req.body.deviceIds.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
     if (!deviceIds.length) return res.status(400).json({ error: 'deviceIds required' });
     if (deviceIds.length > 200) return res.status(400).json({ error: 'too many deviceIds (max 200)' });
@@ -1788,8 +1782,8 @@ app.post('/api/rolodex/ownfleet/noise', async (req, res) => {
 app.post('/api/loopkeeper/analytics/purge', async (req, res) => {
   try {
     const key = String(req.body?.key || '');
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const gate = config.checkAdminKey(key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const deviceIds = Array.isArray(req.body?.deviceIds) ? req.body.deviceIds.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
     const before = req.body?.before ? new Date(String(req.body.before)) : null;
     if (before && isNaN(before.getTime())) return res.status(400).json({ error: 'bad before date' });
@@ -1838,8 +1832,8 @@ app.post('/api/loopkeeper/analytics/purge', async (req, res) => {
 app.get('/api/rolodex/tester/noise-devices', async (req, res) => {
   try {
     const key = String(req.query?.key || '');
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const gate = config.checkAdminKey(key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const monthAgo = new Date(Date.now() - 30 * 24 * 3600_000);
     const counts = await AnalyticsEvent.aggregate([
       { $match: { deviceId: { $in: [...noiseDevices] }, ts: { $gte: monthAgo } } },
@@ -1862,8 +1856,8 @@ app.get('/api/rolodex/tester/noise-devices', async (req, res) => {
 app.post('/api/rolodex/tester/noise-devices', async (req, res) => {
   try {
     const key = String(req.body?.key || '');
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    const gate = config.checkAdminKey(key);
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const add = Array.isArray(req.body?.add) ? req.body.add.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
     const remove = Array.isArray(req.body?.remove) ? req.body.remove.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
     for (const id of add) noiseDevices.add(id);
