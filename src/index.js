@@ -1741,8 +1741,21 @@ app.get('/api/loopkeeper/analytics/inspect', async (req, res) => {
 app.post('/api/rolodex/ownfleet/noise', async (req, res) => {
   try {
     const key = String(req.body?.key || '');
-    const expected = String(envVar('TESTER_ADMIN_KEY') || '');
-    if (!expected || key !== expected) return res.status(401).json({ error: 'forbidden' });
+    // 2026-09-20 BUILD 105 THE TWO KEYS (founder: section 07 said "Key
+    // rejected" — the admin key and the word they actually know are not the
+    // same secret): the write accepts EITHER the TESTER_ADMIN_KEY value OR
+    // the INVESTOR_KEY portal word (case-insensitive, like /investor/verify).
+    // Both gate founder-only surfaces; neither is a user secret.
+    const adminKey = String(envVar('TESTER_ADMIN_KEY') || '');
+    const portalWord = String(envVar('INVESTOR_KEY') || '');
+    const keyOk = !!adminKey && key === adminKey;
+    const wordOk = !!portalWord && key.toLowerCase() === portalWord.toLowerCase();
+    if (!keyOk && !wordOk) {
+      if (!adminKey && !portalWord) {
+        return res.status(500).json({ error: 'No gate key is configured on the server — set TESTER_ADMIN_KEY or INVESTOR_KEY in .env' });
+      }
+      return res.status(401).json({ error: 'forbidden — use the TESTER_ADMIN_KEY value or the Investors portal word' });
+    }
     const deviceIds = Array.isArray(req.body?.deviceIds) ? req.body.deviceIds.map((x) => String(x).slice(0, 80)).filter(Boolean) : [];
     if (!deviceIds.length) return res.status(400).json({ error: 'deviceIds required' });
     if (deviceIds.length > 200) return res.status(400).json({ error: 'too many deviceIds (max 200)' });
@@ -2624,7 +2637,9 @@ async function computeAnalyticsSummary() {
       { $match: { deviceId: deviceFilter } },
       { $group: { _id: '$deviceId', lastSeen: { $max: '$ts' }, total: { $sum: 1 } } },
       { $sort: { lastSeen: -1 } },
-      { $limit: 3 },
+      // 2026-09-20 BUILD 105 THE TEN (founder: "make it last seen = 10,
+      // new faces - first seen = 10"): the lens widens from three to ten.
+      { $limit: 10 },
     ]);
     const out = [];
     for (const r of rows) {
@@ -2679,7 +2694,8 @@ async function computeAnalyticsSummary() {
     const newest = firstSeens
       .filter((r) => r._id)
       .sort((a, b) => new Date(b.first).getTime() - new Date(a.first).getTime())
-      .slice(0, 5);
+      // BUILD 105 THE TEN: new faces widens to ten, matching last seen.
+      .slice(0, 10);
     for (const r of newest) {
       const evs = await AnalyticsEvent.find({ deviceId: r._id }).sort({ ts: -1 }).limit(40).select('event ts props').lean();
       recentNewUsers.push({
