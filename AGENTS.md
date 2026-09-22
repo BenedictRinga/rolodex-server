@@ -40,3 +40,14 @@ framings ("safe", "secure", "your data stays yours", "nothing knows you").
 This binds the chat directive, portal payloads, and every server-generated
 string. We win the ambiguity by action; the lack of incentives is the true
 measure of likely behavior.
+
+## Deploy policy (2026-09-22, founder — standing rule)
+The ONLY deploy sequence is the repo's own script: `./deploy.sh` (it does
+fetch → reset --hard → pull → yarn → .env checks → pm2 restart
+rolodex-server --update-env → pm2 save). NEVER type a bare
+`git pull && pm2 restart rolodex-server` — it skips the yarn install, the
+.env checks, `--update-env`, and `pm2 save`, and it regresses the droplet.
+This rule binds AI assistants: deploy instructions in replies must point at
+`./deploy.sh`, never the shortcut. (2026-09-22: the shorthand appeared in
+chat replies only — both repos' deploy.sh files were verified untouched and
+correct; recorded here so it cannot recur.)
