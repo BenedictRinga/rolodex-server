@@ -2711,6 +2711,24 @@ async function computeAnalyticsSummary() {
     }
   } catch { /* a cold aggregate never kills the summary */ }
 
+  // 2026-09-22 BUILD 117 THE GROWTH LOOP METER (the strategic brief's move 6:
+  // 'The message itself is the only growth loop — meter = message_sent per
+  // device per 14 days'): ORGANIC devices that sent at least one REAL message
+  // in the trailing 14 days, and the average message_sent per SENDING device
+  // over the same window. The one number the product lives or dies by.
+  const growthFrom = new Date(now - 14 * d);
+  const growthSenders14d = (await AnalyticsEvent.distinct('deviceId', { event: 'message_sent', ts: { $gte: growthFrom }, deviceId: { $nin: organicArr } })).length;
+  const growthMsgRows = await AnalyticsEvent.aggregate([
+    { $match: { event: 'message_sent', ts: { $gte: growthFrom }, deviceId: { $nin: organicArr } } },
+    { $group: { _id: '$deviceId', n: { $sum: 1 } } },
+  ]);
+  const growthLoop = {
+    windowDays: 14,
+    senders: growthSenders14d,
+    messages: growthMsgRows.reduce((s, r) => s + r.n, 0),
+    avgPerSendingDevice: growthMsgRows.length ? Math.round((growthMsgRows.reduce((s, r) => s + r.n, 0) / msgRows.length) * 100) / 100 : 0,
+  };
+
   return {
     // 2026-08-30 BUILD 47: the top line is ORGANIC — own-fleet (dev + tester)
     // devices are counted separately in ownFleet, never mixed in.
@@ -2732,6 +2750,7 @@ async function computeAnalyticsSummary() {
     avgSessionSeconds: Math.round(Number(avgSession?.avg) || 0),
     sessionsRecorded30d: avgSession?.count || 0,
     activation,
+    growthLoop, // BUILD 117: THE GROWTH LOOP METER — message_sent per device per 14 days (senders, messages, avg per sending device)
     retention,
     topEvents,
     dailyEvents, // 2026-09-14 BUILD 71: the 14-day x event trend matrix (refine / double-down / drop)
