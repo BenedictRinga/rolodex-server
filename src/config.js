@@ -9,10 +9,15 @@
 const fs = require('fs');
 
 function envRead(name) {
-  if (process.env[name]) return process.env[name];
-  // Same read path as index.js envVar: process.env first, then the .env the
-  // deploy script maintains (process.env alone never sees the repo .env —
-  // no dotenv in this server).
+  // 2026-09-23 BUILD 123 THE FILE IS THE SOURCE (founder, after ~24h of the
+  // gate 401ing while /opt/rolodex-server/.env already held the right key):
+  // a pm2-held stale process env — from a dump-resurrect after a reboot, or
+  // any restart without --update-env — SHADOWED the edited .env, because this
+  // read checked process.env FIRST. For the admin secret the .env FILE is the
+  // deliberate source: it is read FIRST and wins on EVERY gate check (this
+  // module reads fresh per call, so an .env edit takes effect immediately —
+  // no restart needed at all when no stale env is held). process.env is the
+  // fallback, never the shadow.
   const candidates = ['D:/TODOs/db-tools-tmp/zyppar.env', '.env'];
   for (const p of candidates) {
     try {
@@ -21,8 +26,25 @@ function envRead(name) {
       if (m) return m[1];
     } catch { /* try next */ }
   }
+  if (process.env[name]) return process.env[name];
   return '';
 }
+
+// BUILD 123: the boot log names the SOURCE, never the value — a stale-env
+// shadow is now one `pm2 logs` glance instead of a day of mystery.
+(function logAdminSource() {
+  let fromFile = '';
+  for (const p of ['D:/TODOs/db-tools-tmp/zyppar.env', '.env']) {
+    try {
+      const m = fs.readFileSync(p, 'utf8').match(/^TESTER_ADMIN_KEY=["']?([^\r\n"']+)/m);
+      if (m) { fromFile = m[1]; break; }
+    } catch { /* try next */ }
+  }
+  const fromEnv = process.env.TESTER_ADMIN_KEY || '';
+  const source = fromFile ? '.env file' : (fromEnv ? 'process env (STALE RISK — set the file)' : 'NOT SET — admin doors answer 500');
+  if (fromFile && fromEnv && fromFile !== fromEnv) console.log('[admin] TESTER_ADMIN_KEY: .env file WINS (a held process env differs — file-first per build 123)');
+  else console.log('[admin] TESTER_ADMIN_KEY source: ' + source);
+})();
 
 function testerAdminKey() {
   return envRead('TESTER_ADMIN_KEY');

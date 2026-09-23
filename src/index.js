@@ -1867,6 +1867,18 @@ app.post('/api/rolodex/tester/noise-devices', async (req, res) => {
     for (const id of add) noiseDevices.add(id);
     for (const id of remove) noiseDevices.delete(id);
     saveNoiseDevices();
+    // BUILD 123: the .env LK_NOISE_DEVICES line is synced HERE too — the
+    // remove path previously left stale ids in .env (the founder saw a
+    // removed probe device sitting in the file). Memory, the JSON file, and
+    // .env now agree.
+    try {
+      const envPath = path.join(__dirname, '..', '.env');
+      let envText = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8') : '';
+      const line = 'LK_NOISE_DEVICES=' + [...noiseDevices].join(',');
+      if (/^LK_NOISE_DEVICES=.*$/m.test(envText)) envText = envText.replace(/^LK_NOISE_DEVICES=.*$/m, line);
+      else if (noiseDevices.size) envText = (envText && !envText.endsWith('\n') ? envText + '\n' : '') + line + '\n';
+      fs.writeFileSync(envPath, envText, 'utf8');
+    } catch { /* memory + JSON still govern; the .env sync is best effort */ }
     res.json({ ok: true, added: add.length, removed: remove.length, devices: [...noiseDevices] });
   } catch (err) {
     console.error('[rolodex/noise-devices POST]', err.message);

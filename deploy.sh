@@ -69,6 +69,19 @@ fi
 echo "Restarting rolodex-server via pm2..."
 pm2 restart rolodex-server --update-env 2>/dev/null || pm2 start src/index.js --name rolodex-server
 pm2 save
+# 2026-09-23 BUILD 123 THE TRIP-WIRE, DISARMED (founder: "Why not update
+# deploy.sh with --update-env and it stops being a trip-wire"): the restart
+# above ALWAYS carried --update-env — the wire was a reboot's pm2
+# dump-resurrect holding a STALE admin key in the process env, which shadowed
+# the edited .env because config.js read process.env first. config.js now
+# reads the .env FILE FIRST (the file is the source; server 123), so no
+# restart is even needed after an .env edit — but this line makes the state
+# visible on every deploy either way:
+if grep -q "^TESTER_ADMIN_KEY=." .env 2>/dev/null; then
+  echo "Admin gate: TESTER_ADMIN_KEY is set in .env (file-first per server 123 — an .env edit takes effect on this restart, and on every gate check even without one)."
+else
+  echo "WARNING: TESTER_ADMIN_KEY is not set in .env — the tester roster, the dashboard, and the Command Center's noise write answer 500 until you add it."
+fi
 
 # 2026-08-18 AI KEYS: the app never brings a key — Rolodex holds them here.
 if ! grep -qE "^DEEPSEEK_API_KEY=" .env 2>/dev/null; then
