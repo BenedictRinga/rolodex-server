@@ -10,6 +10,24 @@ set -e
 DEPLOY_DIR="/opt/rolodex-server"
 cd "$DEPLOY_DIR" || exit 1
 
+# 2026-09-23 BUILD 125: THE .ENV NEVER-OVERWRITE GUARANTEE (founder: "do not
+# overwrite it at backend deploy.sh"). The founder hand-edits this file
+# (TESTER_ADMIN_KEY, AUTH_SECRET, LK_NOISE_DEVICES...) — deploy.sh must never
+# be able to destroy an edit. Three guards:
+#   (a) .env is GITIGNORED, so the `git reset --hard` below can never touch it
+#       (verify here and abort loudly if anyone ever tracks it);
+#   (b) a timestamped backup is taken before anything runs (the last 10 kept);
+#   (c) the only write deploy.sh ever makes is APPENDING a missing Mongo URI
+#       line on a first run — never replacing or rewriting existing content.
+if git ls-files --error-unmatch .env >/dev/null 2>&1; then
+  echo "FATAL: .env is tracked in git — a reset --hard would overwrite the droplet's real secrets. Untrack it first (git rm --cached .env)."
+  exit 1
+fi
+if [ -f .env ]; then
+  cp .env ".env.backup.$(date +%Y%m%d-%H%M%S)" && echo ".env backed up (deploy.sh never overwrites it)."
+  ls -1t .env.backup.* 2>/dev/null | tail -n +11 | xargs -r rm -- 2>/dev/null || true
+fi
+
 # Function to manage version — same pattern as /opt/zyppar-server/update.sh
 manage_version() {
     # 2026-09-18 BUILD 95 RETIRED AS A SOURCE: the advertised version now
