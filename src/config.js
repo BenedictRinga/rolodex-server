@@ -6,18 +6,18 @@
 // secret has exactly one home, one read path, and one policy.
 // NOTE: the INVESTORS portal word (INVESTOR_KEY) is a DIFFERENT secret —
 // a device-local gate for the portal — and is deliberately NOT accepted here.
+// 2026-09-23 BUILD 123 THE FILE IS THE SOURCE (founder, after ~24h of the
+// gate 401ing while /opt/rolodex-server/.env already held the right key):
+// a pm2-held stale process env — from a dump-resurrect after a reboot, or
+// any restart without --update-env — SHADOWED the edited .env, because this
+// read checked process.env FIRST. For the admin secret the .env FILE is the
+// deliberate source: it is read FIRST and wins on EVERY gate check (this
+// module reads fresh per call, so an .env edit takes effect immediately —
+// no restart needed at all when no stale env is held). process.env is the
+// fallback, never the shadow.
 const fs = require('fs');
 
 function envRead(name) {
-  // 2026-09-23 BUILD 123 THE FILE IS THE SOURCE (founder, after ~24h of the
-  // gate 401ing while /opt/rolodex-server/.env already held the right key):
-  // a pm2-held stale process env — from a dump-resurrect after a reboot, or
-  // any restart without --update-env — SHADOWED the edited .env, because this
-  // read checked process.env FIRST. For the admin secret the .env FILE is the
-  // deliberate source: it is read FIRST and wins on EVERY gate check (this
-  // module reads fresh per call, so an .env edit takes effect immediately —
-  // no restart needed at all when no stale env is held). process.env is the
-  // fallback, never the shadow.
   const candidates = ['D:/TODOs/db-tools-tmp/zyppar.env', '.env'];
   for (const p of candidates) {
     try {

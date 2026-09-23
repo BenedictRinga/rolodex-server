@@ -19,6 +19,9 @@ const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 const { CHAT_DIRECTIVE } = require('./chat-directive');
 const { AGENT_SUBDIRECTIVES } = require('./agents-directive');
+// 2026-09-23 BUILD 124 THE WRITE GATE: one module owns the token mint +
+// verify; the middleware rides before the three user-data write routes.
+const { mintToken, requireWriteAuth } = require('./auth');
 
 function resolveMongoUri() {
   if (process.env.MONGO_DB_URI_ROLODEX) return process.env.MONGO_DB_URI_ROLODEX;
@@ -998,7 +1001,7 @@ function crashIpHash(ip) {
   return crypto.createHash('sha1').update(CRASH_SALT + String(ip || '')).digest('hex').slice(0, 10);
 }
 const clampStr = (v, n) => String(v == null ? '' : v).slice(0, n);
-app.post('/api/rolodex/crashes', (req, res) => {
+app.post('/api/rolodex/crashes', requireWriteAuth, (req, res) => {
   const ipHash = crashIpHash(req.socket?.remoteAddress);
   const now = Date.now();
   const hits = (crashRateHits.get(ipHash) || []).filter((t) => now - t < 60_000);
@@ -1138,7 +1141,27 @@ app.get('/api/rolodex/ai/status', (_req, res) => {
   });
 });
 
-app.post('/api/rolodex/sync', async (req, res) => {
+// ── 2026-09-23 BUILD 124 THE WRITE GATE ─────────────────────────────────────
+// THE HANDSHAKE: the client mints one 7-day HMAC token per anonymous
+// deviceId, then sends Authorization: Bearer <token> on the WRITES below.
+// No person data — the claim set is { did, iat, exp }. Per-IP rate limit
+// keeps the mint from being a free-signing oracle.
+const authMints = new Map(); // ip -> { n, ts }
+app.get('/api/rolodex/auth/token', (req, res) => {
+  const ip = String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '?');
+  const now = Date.now();
+  const rec = authMints.get(ip) || { n: 0, ts: now };
+  if (now - rec.ts > 3600_000) { rec.n = 0; rec.ts = now; }
+  rec.n++;
+  authMints.set(ip, rec);
+  if (rec.n > 30) return res.status(429).json({ error: 'too many token requests — retry in an hour' });
+  const deviceId = String(req.query?.deviceId || '').slice(0, 80);
+  if (!deviceId) return res.status(400).json({ error: 'deviceId required' });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ ok: true, token: mintToken(deviceId), expiresIn: 7 * 86400 });
+});
+
+app.post('/api/rolodex/sync', requireWriteAuth, async (req, res) => {
   try {
     const { deviceId, contacts = [], followUps = [], loops = [], deviceName = '', room = '', ownerPhone = '', ownerName = '' } = req.body || {}; // BUILD 93: the loops ride too
     if (!deviceId) return res.status(400).json({ message: 'deviceId required' });
@@ -1387,7 +1410,7 @@ const ingestBuckets = new Map(); // deviceId -> { hour, count }
 // ingestion outage is visible in hours, not weeks.
 let analyticsIngestFailures = 0;
 
-app.post('/api/rolodex/analytics/events', async (req, res) => {
+app.post('/api/rolodex/analytics/events', requireWriteAuth, async (req, res) => {
   try {
     const deviceId = String(req.body?.deviceId || '').slice(0, 80);
     const events = Array.isArray(req.body?.events) ? req.body.events.slice(0, 100) : [];
