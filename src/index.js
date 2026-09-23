@@ -2775,6 +2775,43 @@ async function computeAnalyticsSummary() {
     recentTesters = testerDeviceIds.length ? await fetchRecentDevices({ $in: testerDeviceIds }) : [];
   } catch { /* a cold aggregate never kills the summary */ }
 
+  // ── 2026-09-23 BUILD 127 THE CHURN LEDGER (founder: "Some users appear to
+  // be churning. Can I see last 10 churns in CommandCenter, so one can
+  // investigate the places they touched to see if it was deadends or
+  // unimpressive") ──────────────────────────────────────────────────────────
+  // A churn = an ORGANIC device (not the founder's fleet, not testers) that
+  // was REALLY here — at least 3 events, at least one session — and then went
+  // quiet for the churn horizon (7 days). recentChurns = the 10 most recently
+  // quiet devices, each with its LAST 10 EVENTS (the places they touched:
+  // event + timestamp + page) so a dead-end reads straight off the trail.
+  // Anonymous ids only; computed fresh per summary — nothing to monitor.
+  let recentChurns = [];
+  try {
+    const churnHorizon = new Date(Date.now() - 7 * 24 * 3600_000);
+    const churnRows = await AnalyticsEvent.aggregate([
+      { $match: { deviceId: { $nin: [...organicArr, ''] }, ts: { $lt: churnHorizon } } },
+      { $group: { _id: '$deviceId', last: { $max: '$ts' }, total: { $sum: 1 } } },
+      { $match: { total: { $gte: 3 } } },
+      { $sort: { last: -1 } },
+      { $limit: 10 },
+    ]);
+    for (const r of churnRows) {
+      const evs = await AnalyticsEvent.find({ deviceId: r._id })
+        .sort({ ts: -1 }).limit(10)
+        .select('event ts props').lean();
+      recentChurns.push({
+        id: String(r._id || ''),
+        lastSeen: r.last ? new Date(r.last).toISOString() : null,
+        total: r.total || 0,
+        events: evs.map((e) => ({
+          ev: e.event,
+          at: e.ts ? new Date(e.ts).toISOString() : null,
+          page: e.props?.page || undefined,
+        })),
+      });
+    }
+  } catch { /* a cold aggregate never kills the summary */ }
+
   // ── 2026-09-20 BUILD 101 THE NEW-USER RECORD (founder: "I still do not
   // see a reference record for most recent 5 new users, and other stats
   // requested alongside... I see a suggestion of 4 DAU since my last check.
@@ -2877,6 +2914,7 @@ async function computeAnalyticsSummary() {
     recentUsers, // BUILD 98: THE LAST THREE — the three most recent ORGANIC devices, tap-to-reveal trails
     recentTesters, // BUILD 98: the three most recent TESTER devices, also visible
     recentNewUsers, // BUILD 101: THE REFERENCE RECORD — the five most recent FIRST-SEEN organic devices, trails included
+    recentChurns, // BUILD 127: THE CHURN LEDGER — the 10 most recently quiet organic devices, last 10 events each (the places they touched)
     dauSplit, // BUILD 101: today's DAU split into new vs returning — the repeat question answered in place
     inviteIssues: {
       last24h: inviteIssues24h,
