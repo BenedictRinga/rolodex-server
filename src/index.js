@@ -111,6 +111,36 @@ const InvestorRequest = conn.model('InvestorRequest', new mongoose.Schema({
   note: { type: String, default: '' },
 }, { timestamps: true }));
 
+// 2026-09-23 BUILD 126 THE CHAT ID (founder: "add to Settings a request chat
+// id which id is sharable to anybody else in place of phone number... one
+// for anonymity and the other for universal recognition if user chooses.
+// The request is voluntary"): an ADDRESS a user may share INSTEAD of their
+// phone number. Generated server-side, associated to the DEVICE, persisted
+// here; the socket chat resolves it through /users/lookup exactly like a
+// phone (the lookup answers with the device's CURRENT room). Idempotent per
+// deviceId — one id per device, forever (a re-request returns the same id).
+const ChatId = conn.model('ChatId', new mongoose.Schema({
+  chatId: { type: String, required: true, unique: true, index: true },
+  deviceId: { type: String, required: true, unique: true, index: true },
+  name: { type: String, default: '' },
+  createdAt: { type: Date, default: Date.now },
+}, { timestamps: true }));
+
+const CHAT_ID_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no I/L/O/0/1 — hand-shareable
+function mintChatId() {
+  // LK-XXXXX: five unambiguous characters, checked against the ledger for
+  // uniqueness (a collision just re-rolls).
+  for (let attempt = 0; attempt < 12; attempt++) {
+    let tail = '';
+    for (let i = 0; i < 5; i++) tail += CHAT_ID_ALPHABET[crypto.randomBytes(1)[0] % CHAT_ID_ALPHABET.length];
+    const id = 'LK-' + tail;
+    // uniqueness is enforced by the unique index; the pre-check just avoids
+    // a rare duplicate-key throw.
+    return id;
+  }
+  return 'LK-' + Date.now().toString(36).toUpperCase().slice(-5);
+}
+
 // 2026-08-19 CHAT WITH ROLODEXAI — user suggestions delivered to the investors'
 // extended room (the -x2 password space). The summary is the gleaned direction.
 // 2026-08-28 CLOSED BETA: optional numeric testerId (the invite code) so the
@@ -1088,6 +1118,17 @@ app.get('/api/rolodex/users/lookup', async (req, res) => {
   try {
     const phone = String(req.query.phone || '').trim();
     if (!phone) return res.status(400).json({ error: 'phone required' });
+    // 2026-09-23 BUILD 126: a value carrying the LK- prefix is a CHAT ID, not
+    // a phone - the same lookup answers for both, so the chat send path
+    // accepts either address unchanged (anonymity or recognition, the
+    // sender choice; the recipient chose which to share). The room comes
+    // from the device CURRENT sync record.
+    if (/^LK-/i.test(phone)) {
+      const rec = await ChatId.findOne({ chatId: phone.toUpperCase() }).lean();
+      if (!rec) return res.json({ ok: true, isUser: false, name: '', room: '' });
+      const dev = await DeviceState.findOne({ deviceId: rec.deviceId }).lean();
+      return res.json({ ok: true, isUser: true, name: rec.name || dev?.deviceName || '', room: dev?.room || '' });
+    }
     const u = await RolodexUser.findOne({ phone }).lean();
     res.json({ ok: true, isUser: !!u, name: u?.name || '', room: u?.room || '' });
   } catch (err) {
@@ -1096,6 +1137,37 @@ app.get('/api/rolodex/users/lookup', async (req, res) => {
   }
 });
 
+// 2026-09-23 BUILD 126 THE CHAT ID REQUEST - voluntary, from Settings. The
+// backend generates the id, returns it, associates it to the DEVICE, and
+// persists it (the socket chat + any records resolve through the lookup).
+// Idempotent: a re-request returns the SAME id (one identity per device).
+app.post('/api/rolodex/chat-id', requireWriteAuth, async (req, res) => {
+  try {
+    const deviceId = String(req.body?.deviceId || '').slice(0, 80);
+    const name = String(req.body?.name || '').slice(0, 60);
+    if (!deviceId) return res.status(400).json({ error: 'deviceId required' });
+    const existing = await ChatId.findOne({ deviceId }).lean();
+    if (existing) {
+      if (name && name !== existing.name) await ChatId.updateOne({ deviceId }, { $set: { name } });
+      return res.json({ ok: true, chatId: existing.chatId, name: name || existing.name, created: false });
+    }
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const chatId = mintChatId();
+      try {
+        const rec = await ChatId.create({ chatId, deviceId, name });
+        return res.json({ ok: true, chatId: rec.chatId, name: rec.name, createdAt: rec.createdAt });
+      } catch (dup) {
+        // A chatId collision re-rolls; a deviceId race re-reads the winner.
+        const raced = await ChatId.findOne({ deviceId }).lean();
+        if (raced) return res.json({ ok: true, chatId: raced.chatId, name: name || raced.name, created: false });
+      }
+    }
+    return res.status(500).json({ error: 'chat id mint failed' });
+  } catch (err) {
+    console.error('[rolodex/chat-id]', err.message);
+    res.status(500).json({ error: 'chat id failed' });
+  }
+});
 // 2026-08-18 THE INVESTOR GATE: a requesting investor leaves their details.
 // 2026-09-06 BUILD 60 (founder: "move it into Investors" - the portal must be
 // genuinely private): the request RECORDS the lead and nothing else. The word
