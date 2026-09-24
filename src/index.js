@@ -141,6 +141,18 @@ function mintChatId() {
   return 'LK-' + Date.now().toString(36).toUpperCase().slice(-5);
 }
 
+// 2026-09-24 BUILD 128 THE TESTER CHANNEL (founder: "we need a reporting
+// channel on features, bugs and suggestions... They can then drop messages
+// to which I or any other CommandCenter accessed user can reply to. Only
+// users in the array of testers can see this button or use the service"):
+// a thread per tester ChatId. The tester drops reports (features, bugs,
+// suggestions); the founder (any TESTER_ADMIN_KEY holder) reads the inbox
+// and replies. Anonymous - a chatId, never a name.
+const TesterChat = conn.model('TesterChat', new mongoose.Schema({
+  chatId: { type: String, required: true, unique: true, index: true },
+  deviceId: { type: String, required: true, index: true },
+  msgs: [{ from: { type: String, default: 'tester' }, text: { type: String, default: '' }, at: { type: Date, default: Date.now } }],
+}, { timestamps: true }));
 // 2026-08-19 CHAT WITH ROLODEXAI — user suggestions delivered to the investors'
 // extended room (the -x2 password space). The summary is the gleaned direction.
 // 2026-08-28 CLOSED BETA: optional numeric testerId (the invite code) so the
@@ -1166,6 +1178,77 @@ app.post('/api/rolodex/chat-id', requireWriteAuth, async (req, res) => {
   } catch (err) {
     console.error('[rolodex/chat-id]', err.message);
     res.status(500).json({ error: 'chat id failed' });
+  }
+});
+// 2026-09-24 BUILD 128 THE TESTER CHANNEL - the tester's own thread. POST
+// drops a report (features, bugs, suggestions); GET returns the thread so
+// the replies come home. GATED TWICE: the chatId must belong to the device
+// AND the device must carry the testerId tag (the roster, not the world).
+app.post('/api/rolodex/tester-chat', requireWriteAuth, async (req, res) => {
+  try {
+    const deviceId = String(req.body?.deviceId || '').slice(0, 80);
+    const chatId = String(req.body?.chatId || '').toUpperCase().slice(0, 16);
+    const text = String(req.body?.text || '').slice(0, 600);
+    if (!deviceId || !chatId || !text.trim()) return res.status(400).json({ error: 'deviceId, chatId and text required' });
+    const rec = await ChatId.findOne({ chatId, deviceId }).lean();
+    if (!rec) return res.status(403).json({ error: 'chat id does not belong to this device' });
+    const tagged = await AnalyticsEvent.countDocuments({ deviceId, 'props.testerId': { $type: 'number', $gt: 0 } });
+    if (!tagged) return res.status(403).json({ error: 'the reporting channel is for the tester roster' });
+    let thread = await TesterChat.findOne({ chatId });
+    if (!thread) thread = await TesterChat.create({ chatId, deviceId, msgs: [] });
+    thread.msgs.push({ from: 'tester', text, at: new Date() });
+    if (thread.msgs.length > 80) thread.msgs = thread.msgs.slice(-80);
+    await thread.save();
+    res.json({ ok: true, msgs: thread.msgs });
+  } catch (err) {
+    console.error('[rolodex/tester-chat POST]', err.message);
+    res.status(500).json({ error: 'tester chat failed' });
+  }
+});
+
+app.get('/api/rolodex/tester-chat', async (req, res) => {
+  try {
+    const deviceId = String(req.query?.deviceId || '').slice(0, 80);
+    const chatId = String(req.query?.chatId || '').toUpperCase().slice(0, 16);
+    if (!deviceId || !chatId) return res.status(400).json({ error: 'deviceId and chatId required' });
+    const thread = await TesterChat.findOne({ chatId, deviceId }).lean();
+    res.json({ ok: true, msgs: thread?.msgs || [] });
+  } catch (err) {
+    console.error('[rolodex/tester-chat GET]', err.message);
+    res.status(500).json({ error: 'tester chat read failed' });
+  }
+});
+
+// The founder's inbox: every tester thread, newest activity first - and the
+// reply door. TESTER_ADMIN_KEY gated (the CommandCenter accessed users).
+app.get('/api/rolodex/tester-chat/inbox', async (req, res) => {
+  try {
+    const gate = config.checkAdminKey(String(req.query?.key || ''));
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
+    const threads = await TesterChat.find().sort({ updatedAt: -1 }).limit(50).lean();
+    res.json({ ok: true, threads });
+  } catch (err) {
+    console.error('[rolodex/tester-chat/inbox]', err.message);
+    res.status(500).json({ error: 'inbox failed' });
+  }
+});
+
+app.post('/api/rolodex/tester-chat/reply', async (req, res) => {
+  try {
+    const gate = config.checkAdminKey(String(req.body?.key || ''));
+    if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
+    const chatId = String(req.body?.chatId || '').toUpperCase().slice(0, 16);
+    const text = String(req.body?.text || '').slice(0, 600);
+    if (!chatId || !text.trim()) return res.status(400).json({ error: 'chatId and text required' });
+    const thread = await TesterChat.findOne({ chatId });
+    if (!thread) return res.status(404).json({ error: 'unknown thread' });
+    thread.msgs.push({ from: 'founder', text, at: new Date() });
+    if (thread.msgs.length > 80) thread.msgs = thread.msgs.slice(-80);
+    await thread.save();
+    res.json({ ok: true, msgs: thread.msgs });
+  } catch (err) {
+    console.error('[rolodex/tester-chat/reply]', err.message);
+    res.status(500).json({ error: 'reply failed' });
   }
 });
 // 2026-08-18 THE INVESTOR GATE: a requesting investor leaves their details.
