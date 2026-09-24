@@ -31,6 +31,13 @@
 // .env to arm it. This keeps the deploy order safe: deploy server, then
 // the app (which fetches tokens), then set the secret.
 const crypto = require('crypto');
+// 2026-09-24 SERVER 130 THE MISSING REQUIRE (the founder's droplet log +
+// probes proved the gate stayed open with the secret anchored in .env): this
+// module calls fs.readFileSync in readSecret() but never required fs — the
+// ReferenceError was swallowed by the candidates' try/catch, every candidate
+// "failed", and the gate fell back to process.env (which pm2 does not carry
+// from .env). The require is the whole fix.
+const fs = require('fs');
 
 const AUTH_SECRET = (function readSecret() {
   const candidates = ['D:/TODOs/db-tools-tmp/zyppar.env', '.env'];
