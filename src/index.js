@@ -1192,8 +1192,15 @@ app.post('/api/rolodex/tester-chat', requireWriteAuth, async (req, res) => {
     if (!deviceId || !chatId || !text.trim()) return res.status(400).json({ error: 'deviceId, chatId and text required' });
     const rec = await ChatId.findOne({ chatId, deviceId }).lean();
     if (!rec) return res.status(403).json({ error: 'chat id does not belong to this device' });
+    // 2026-09-24 SERVER 131 THE FOUNDER'S SEAT (the founder's droplet run +
+    // probes: their device rides the app-332 PORTAL APERTURE, not the roster
+    // tag, so this tester-tag gate 403'd every report silently - "Chat still
+    // not going. ChatID present."). The gate now accepts the tester roster
+    // OR the founder's own fleet (the noise list - CC 07's Write puts the
+    // device here). The organic meters keep excluding both, and a plain
+    // stranger (no tag, not own fleet) is still refused.
     const tagged = await AnalyticsEvent.countDocuments({ deviceId, 'props.testerId': { $type: 'number', $gt: 0 } });
-    if (!tagged) return res.status(403).json({ error: 'the reporting channel is for the tester roster' });
+    if (!tagged && !noiseDevices.has(deviceId)) return res.status(403).json({ error: 'the reporting channel is for the tester roster (your own device: add it via Command Center 07)' });
     let thread = await TesterChat.findOne({ chatId });
     if (!thread) thread = await TesterChat.create({ chatId, deviceId, msgs: [] });
     thread.msgs.push({ from: 'tester', text, at: new Date() });
