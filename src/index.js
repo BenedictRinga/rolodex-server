@@ -629,6 +629,55 @@ app.post('/api/rolodex/ai/compose', async (req, res) => {
 // DeepSeek/Grok chats).
 // 2026-08-19 AI CHAT — stateless privacy: messages are forwarded to the
 // upstream AI (DeepSeek/xAI) in memory only. NEVER persisted, NEVER logged.
+// ============================== 2026-09-25 SERVER 137 THE LOOP-TIONARY ==============================
+// (founder: "Why don't we start with a module for words/sentences lookup - it is an
+// immediate buy-in for tapping AI services... Responses from AI should be to the
+// point, and minimal noise plus usage example/etymology"). One endpoint, no
+// persistence beyond the device's own cache (the DEVICE carries the history -
+// nothing lands in Mongo). Stateless like /chat. The reply is a strict JSON
+// object parsed by the client; the prompt forbids noise.
+app.post('/api/rolodex/looptionary', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const q = String(req.body?.q || '').trim().slice(0, 300);
+    const lang = String(req.body?.lang || req.headers['accept-language'] || '')
+      .slice(0, 32).split(',')[0].trim() || 'en';
+    if (!q) return res.status(400).json({ error: 'q required' });
+    const system = {
+      role: 'system',
+      content: 'You are the Loop-tionary: a fast, exact word/sentence lookup. Reply with ONLY a compact JSON object (no markdown fences, no prose before or after) shaped exactly: {"term":"<the queried term as given>","pos":"<part of speech or type: noun/verb/phrase/idiom/...>","meaning":"<ONE crisp sentence - the core meaning>","detail":"<at most two short sentences of nuance ONLY if truly needed, else empty string>","example":"<ONE natural usage example sentence>","etymology":"<one short line of origin, else empty string>","lang":"<the language of the QUERY>"}. RULES: to the point, zero filler, zero greetings, no translations unless the query language differs from the user language (then add "inUserLang":"<translation of the meaning>"). If the query is a sentence, pos=phrase and meaning explains what it conveys. If the term does not exist, return {"term":<q as given>,"pos":"","meaning":"","detail":"","example":"","etymology":"","lang":"<lang>","notFound":true}. User language is "' + lang + '"; answer the FIELDS in the user language, keep the queried term verbatim.',
+    };
+    const user = { role: 'user', content: q };
+    const call = async (key, base, model) => {
+      const r = await fetch(base, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + key },
+        body: JSON.stringify({ model, messages: [system, user], max_tokens: 300, temperature: 0.2 }),
+      });
+      if (!r.ok) throw new Error('upstream ' + r.status);
+      const data = await r.json();
+      return String(data?.choices?.[0]?.message?.content || '').trim();
+    };
+    let raw = '';
+    if (envVar('DEEPSEEK_API_KEY')) { try { raw = await call(envVar('DEEPSEEK_API_KEY'), 'https://api.deepseek.com/chat/completions', 'deepseek-chat'); } catch { } }
+    if (!raw && envVar('OPENROUTER_API_KEY')) { try { raw = await call(envVar('OPENROUTER_API_KEY'), 'https://openrouter.ai/api/v1/chat/completions', envVar('OPENROUTER_MODEL') || 'z-ai/glm-5.3-flash'); } catch { } }
+    if (!raw && envVar('GROK_API_KEY')) { try { raw = await call(envVar('GROK_API_KEY'), 'https://api.x.ai/v1/chat/completions', 'grok-2-latest'); } catch { } }
+    if (!raw) return res.status(503).json({ error: 'lookup unavailable' });
+    // Tolerant JSON extraction - the model may wrap in fences despite orders.
+    const m = raw.match(/\{[\s\S]*\}/);
+    let entry = null;
+    if (m) { try { entry = JSON.parse(m[0]); } catch { entry = null; } }
+    if (!entry || typeof entry !== 'object') {
+      // Last resort: serve the raw text as the meaning, clearly marked.
+      entry = { term: q, pos: '', meaning: raw.slice(0, 500), detail: '', example: '', etymology: '', lang };
+    }
+    res.json({ ok: true, entry });
+  } catch (err) {
+    console.error('[rolodex/looptionary]', err.message);
+    res.status(500).json({ error: 'lookup failed' });
+  }
+});
+
 app.post('/api/rolodex/chat', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
