@@ -152,6 +152,9 @@ const TesterChat = conn.model('TesterChat', new mongoose.Schema({
   chatId: { type: String, required: true, unique: true, index: true },
   deviceId: { type: String, required: true, index: true },
   msgs: [{ from: { type: String, default: 'tester' }, text: { type: String, default: '' }, at: { type: Date, default: Date.now } }],
+  // 2026-09-25 SERVER 135 READ RECEIPTS (founder: 'add more robust features for accountability, such as day-date, and read-receipts'): the thread stamps WHO read it and when - founderReadAt on the CommandCenter inbox fetch, testerReadAt on the tester's own read. The tester's sheet shows the double tick on their reports once founderReadAt covers them; the Command Center shows whether the tester has seen HQ's reply.
+  founderReadAt: { type: Date, default: null },
+  testerReadAt: { type: Date, default: null },
 }, { timestamps: true }));
 // 2026-08-19 CHAT WITH ROLODEXAI — user suggestions delivered to the investors'
 // extended room (the -x2 password space). The summary is the gleaned direction.
@@ -1218,8 +1221,15 @@ app.get('/api/rolodex/tester-chat', async (req, res) => {
     const deviceId = String(req.query?.deviceId || '').slice(0, 80);
     const chatId = String(req.query?.chatId || '').toUpperCase().slice(0, 16);
     if (!deviceId || !chatId) return res.status(400).json({ error: 'deviceId and chatId required' });
-    const thread = await TesterChat.findOne({ chatId, deviceId }).lean();
-    res.json({ ok: true, msgs: thread?.msgs || [] });
+    const thread = await TesterChat.findOne({ chatId, deviceId });
+    // SERVER 135: the read stamp - the tester is reading the thread NOW.
+    let testerReadAt = null;
+    if (thread) {
+      thread.testerReadAt = new Date();
+      testerReadAt = thread.testerReadAt;
+      await thread.save();
+    }
+    res.json({ ok: true, msgs: thread?.msgs || [], testerReadAt });
   } catch (err) {
     console.error('[rolodex/tester-chat GET]', err.message);
     res.status(500).json({ error: 'tester chat read failed' });
@@ -1233,6 +1243,13 @@ app.get('/api/rolodex/tester-chat/inbox', async (req, res) => {
     const gate = config.checkAdminKey(String(req.query?.key || ''));
     if (!gate.ok) return res.status(gate.status).json({ error: gate.error });
     const threads = await TesterChat.find().sort({ updatedAt: -1 }).limit(50).lean();
+    // SERVER 135: the founder is READING these threads now - stamp it, so the
+    // tester's sheet can show the double tick on their reports.
+    const now = new Date();
+    await Promise.all(threads.map((th) =>
+      TesterChat.updateOne({ _id: th._id, $or: [{ founderReadAt: null }, { founderReadAt: { $lt: (th.msgs && th.msgs.length ? th.msgs[th.msgs.length - 1].at : now) } }] }, { $set: { founderReadAt: now } }).catch(() => null)
+    ));
+    threads.forEach((th) => { th.founderReadAt = now; });
     res.json({ ok: true, threads });
   } catch (err) {
     console.error('[rolodex/tester-chat/inbox]', err.message);
