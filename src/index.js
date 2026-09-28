@@ -1935,7 +1935,7 @@ app.get('/api/rolodex/tester/roster', async (req, res) => {
 // seen, the event mix, and a BEYOND-LANDING flag (any event other than the
 // passive arrival set). This is the honest answer to "was there activity
 // beyond landing?", per device, no guessing.
-app.get('/api/loopkeeper/analytics/inspect', async (req, res) => {
+app.get('/api/rolodex/analytics/inspect', async (req, res) => {
   try {
     const key = String(req.query?.key || '');
     const gate = config.checkAdminKey(key);
@@ -2034,7 +2034,7 @@ app.post('/api/rolodex/ownfleet/noise', async (req, res) => {
   }
 });
 
-app.post('/api/loopkeeper/analytics/purge', async (req, res) => {
+app.post('/api/rolodex/analytics/purge', async (req, res) => {
   try {
     const key = String(req.body?.key || '');
     const gate = config.checkAdminKey(key);
