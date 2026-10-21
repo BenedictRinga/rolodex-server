@@ -1,0 +1,426 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LoopKeeper — Live dashboard</title><style>
+body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6e8f0;margin:0;padding:24px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:13px;color:#8b93b0;font-weight:400;margin:0 0 8px}
+.badge{display:inline-block;background:#1f6feb22;color:#58a6ff;border:1px solid #1f6feb55;border-radius:20px;padding:3px 10px;font-size:12px;margin-left:8px}
+.tab-note{background:#1c2128;border:1px solid #30363d;border-radius:10px;padding:10px 12px;font-size:13px;color:#8b93b0;margin:0 0 18px}
+.tab-note b{color:#e6e8f0}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px}
+caption{caption-side:top;text-align:left;font-size:12px;color:#8b93b0;padding:6px 2px 10px}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #21262d}th{color:#8b93b0;font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+.dim{color:#8b93b0;font-size:12px}.live{color:#3fb950;font-weight:600}
+.foot{color:#8b93b0;font-size:12px;margin-top:20px}
+</style></head><body>
+<h1>LoopKeeper <span class="badge live">● LIVE</span></h1>
+<h2>Every device that talks to the fresh <code>loopkeeper</code> database — auto-refreshing every 5s.</h2>
+<div class="tab-note"><b>You are in the live dashboard (a new browser tab).</b> The LoopKeeper app is still open behind this tab — close this tab or switch back to continue there.</div>
+<table>
+<caption>Recent names = the first 4 contact display names that device last pushed. Contacts / Follow-ups = the raw counts in that push, not deduplicated people.</caption>
+<thead><tr><th>Device</th><th>Last sync</th><th>Room</th><th>Contacts</th><th>Follow-ups</th><th>Recent names</th></tr></thead>
+<tbody><tr>
+        <td><b>rolodex-wdgowh0fmumhavkq</b><br/><span class="dim">rolodex-wdgowh0fmu</span></td>
+        <td class="sync-time" data-iso="2026-10-07T03:06:21.504Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — iOS · Safari</b><br/><span class="dim">rolodex-3dbvu2jamu</span></td>
+        <td class="sync-time" data-iso="2026-10-05T13:15:00.774Z">—</td>
+        <td>—</td>
+        <td>2</td>
+        <td>0</td>
+        <td class="dim">Viking, Boxing</td>
+      </tr>
+<tr>
+        <td><b>rolodex-7pr8eq5hmu28g8ly</b><br/><span class="dim">rolodex-7pr8eq5hmu</span></td>
+        <td class="sync-time" data-iso="2026-10-03T06:58:21.749Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-4kloeqp5mu5y76mh</b><br/><span class="dim">rolodex-4kloeqp5mu</span></td>
+        <td class="sync-time" data-iso="2026-09-25T04:42:52.822Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-0zywq34vmu2b9m1s</b><br/><span class="dim">rolodex-0zywq34vmu</span></td>
+        <td class="sync-time" data-iso="2026-09-22T22:49:59.594Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-6fzkz23rmu1t8xe1</b><br/><span class="dim">rolodex-6fzkz23rmu</span></td>
+        <td class="sync-time" data-iso="2026-09-21T21:06:27.279Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — Android · Chrome</b><br/><span class="dim">rolodex-0hk30d61mu</span></td>
+        <td class="sync-time" data-iso="2026-09-20T08:33:03.065Z">—</td>
+        <td>INVESTORS</td>
+        <td>84</td>
+        <td>0</td>
+        <td class="dim">LoopKeeper.com buy offer, Morning run, Ahutu Dominic Ringa, Ayodele Othihiwa</td>
+      </tr>
+<tr>
+        <td><b>rolodex-9z0lv31wmtzivr2f</b><br/><span class="dim">rolodex-9z0lv31wmt</span></td>
+        <td class="sync-time" data-iso="2026-09-13T07:58:51.355Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-pzgx2mwgmtywtdfr</b><br/><span class="dim">rolodex-pzgx2mwgmt</span></td>
+        <td class="sync-time" data-iso="2026-09-12T21:41:22.469Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-wq6nx3oamtx8on30</b><br/><span class="dim">rolodex-wq6nx3oamt</span></td>
+        <td class="sync-time" data-iso="2026-09-11T17:37:49.933Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-iyd1gplumtt6tvi2</b><br/><span class="dim">rolodex-iyd1gplumt</span></td>
+        <td class="sync-time" data-iso="2026-09-08T21:34:51.724Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-qab59yknmtnnikfp</b><br/><span class="dim">rolodex-qab59yknmt</span></td>
+        <td class="sync-time" data-iso="2026-09-05T00:35:25.676Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-fmbia0vvmti8no0w</b><br/><span class="dim">rolodex-fmbia0vvmt</span></td>
+        <td class="sync-time" data-iso="2026-09-01T05:40:32.716Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-f45kv12gmt</span></td>
+        <td class="sync-time" data-iso="2026-08-28T08:40:34.224Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">John Doe, Jane Smith, Michael Chen, Aisha Patel</td>
+      </tr>
+<tr>
+        <td><b>rolodex-np159tofmtc3o87y</b><br/><span class="dim">rolodex-np159tofmt</span></td>
+        <td class="sync-time" data-iso="2026-08-27T22:34:24.910Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>rolodex-c08ui5l9mt79vr5j</b><br/><span class="dim">rolodex-c08ui5l9mt</span></td>
+        <td class="sync-time" data-iso="2026-08-24T18:49:10.745Z">—</td>
+        <td>—</td>
+        <td>0</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — Android · Chrome</b><br/><span class="dim">rolodex-702qoxddmt</span></td>
+        <td class="sync-time" data-iso="2026-08-20T09:31:56.152Z">—</td>
+        <td>—</td>
+        <td>39</td>
+        <td>0</td>
+        <td class="dim">Tom Etuh, Tom 9MOBILE Etuh, Caleb Fola Fola Caleb. Diamond Bank Dorm Account Fola Caleb, Ayodele Othihiwa</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — Windows · Chrome</b><br/><span class="dim">rolodex-sxen9c3ymt</span></td>
+        <td class="sync-time" data-iso="2026-08-20T08:37:59.681Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">John Doe, Jane Smith, Michael Chen, Aisha Patel</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — Windows · Chrome</b><br/><span class="dim">rolodex-z14owr29mt</span></td>
+        <td class="sync-time" data-iso="2026-08-19T23:12:20.548Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">John Doe, Jane Smith, Michael Chen, Aisha Patel</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — Android · Chrome</b><br/><span class="dim">rolodex-i7cbgs61mt</span></td>
+        <td class="sync-time" data-iso="2026-08-19T20:00:03.386Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">John Doe, Jane Smith, Michael Chen, Aisha Patel</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — Windows · Chrome</b><br/><span class="dim">rolodex-nvv563osms</span></td>
+        <td class="sync-time" data-iso="2026-08-19T19:22:45.750Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">John Doe, Jane Smith, Michael Chen, Aisha Patel</td>
+      </tr>
+<tr>
+        <td><b>Rolodex — Android · Chrome</b><br/><span class="dim">rolodex-a4wbhmvdmt</span></td>
+        <td class="sync-time" data-iso="2026-08-19T19:15:00.508Z">—</td>
+        <td>—</td>
+        <td>28</td>
+        <td>0</td>
+        <td class="dim">Lucy Ndegwa, Nwando Egbosi AfroIntroductions, Omovi Gabriel Onwuka, Calistus Ojobo village square buyer</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Linux; Android 10; K) Apple</b><br/><span class="dim">rolodex-ofn1onjkmt</span></td>
+        <td class="sync-time" data-iso="2026-08-19T12:38:33.456Z">—</td>
+        <td>—</td>
+        <td>20</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Linux; Android 10; K) Apple</b><br/><span class="dim">rolodex-9pdryj1fms</span></td>
+        <td class="sync-time" data-iso="2026-08-19T12:38:25.047Z">—</td>
+        <td>—</td>
+        <td>20</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-clamyjv0ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:52:47.254Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-y0d9edygms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:52:01.697Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-2vfc2yzdms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:51:42.690Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-nb62gx3mms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:50:51.890Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Linux; Android 10; K) Apple</b><br/><span class="dim">rolodex-rhwiqjucms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:15:49.945Z">—</td>
+        <td>—</td>
+        <td>15</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-qlty7636ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:14:51.170Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-nglbdn99ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:14:30.461Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-wtg3yz6tms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:14:00.534Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-8e43tptems</span></td>
+        <td class="sync-time" data-iso="2026-08-18T11:13:36.503Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-b57dv3g0ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:58:07.548Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-an20zhv8ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:57:04.889Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-o9aw8xbmms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:56:53.580Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-x38cysw2ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:34:03.292Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-pgso0tucms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:33:23.892Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-cxonu6u9ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:33:22.332Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-76fi296wms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:32:28.986Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-m2egmyozms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:31:43.144Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-c9wqo36ums</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:31:03.111Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-ilxp5kyjms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:30:15.560Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-ei1iqah0ms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:29:22.036Z">—</td>
+        <td>—</td>
+        <td>1</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-ev78tcpcms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:28:42.374Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-e17l5ghmms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:27:16.139Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-86ylhpkxms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:26:40.729Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-13zmy60bms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:26:00.984Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-tbryxfusms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:25:03.857Z">—</td>
+        <td>—</td>
+        <td>13</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr>
+<tr>
+        <td><b>Mozilla/5.0 (Windows NT 10.0; Win64; x64</b><br/><span class="dim">rolodex-me93wvdlms</span></td>
+        <td class="sync-time" data-iso="2026-08-18T10:24:00.352Z">—</td>
+        <td>—</td>
+        <td>12</td>
+        <td>0</td>
+        <td class="dim">—</td>
+      </tr></tbody></table>
+<div class="foot">252 device(s) synced · <span id="clock">—</span></div>
+<script>
+function formatTimes(){document.querySelectorAll('.sync-time').forEach(function(el){var iso=el.getAttribute('data-iso');if(iso){try{el.textContent=new Date(iso).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}catch(e){el.textContent='—';}}});document.getElementById('clock').textContent=new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});}
+formatTimes();
+setInterval(function(){fetch('/api/rolodex/live',{headers:{Accept:'text/html'},cache:'no-store'}).then(function(r){return r.text();}).then(function(h){var m=h.match(/<tbody>([\s\S]*?)<\/tbody>/);if(m)document.querySelector('tbody').innerHTML=m[1];formatTimes();}).catch(function(){});},5000);
+</script>
+</body></html>
