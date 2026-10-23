@@ -1951,6 +1951,7 @@ app.get('/api/rolodex/analytics/inspect', async (req, res) => {
         first: { $min: '$ts' },
         last: { $max: '$ts' },
         mix: { $push: '$event' },
+        props: { $push: '$props' },
       } },
       { $sort: { last: -1 } },
       { $limit: 200 },
@@ -1972,6 +1973,23 @@ app.get('/api/rolodex/analytics/inspect', async (req, res) => {
           beyondLanding: active.length > 0,
           activeEvents: active,
           mix: counts,
+          // 397 THE LISTENER'S LENS: the props digest - whitelisted numeric/enum
+          // keys only (the client already sends only anonymous props); inspect
+          // stops discarding them.
+          props: (() => {
+            const ALLOW = new Set(['visitNumber', 'isReturning', 'daysSinceFirstUse', 'totalTimeSpentSeconds', 'line', 'viaTab', 'lineAtTap', 'gate', 'choice', 'view', 'dwellMs', 'latencyMs', 'prompt', 'count', 'n', 'duration', 'to']);
+            const out = {};
+            for (const p of (r.props || [])) {
+              if (!p || typeof p !== 'object') continue;
+              for (const [k, v] of Object.entries(p)) {
+                if (!ALLOW.has(k)) continue;
+                if (typeof v !== 'number' && !(typeof v === 'string' && v.length <= 24)) continue;
+                const kk = String(k); const vv = String(v);
+                out[kk] = out[kk] || {}; out[kk][vv] = (out[kk][vv] || 0) + 1;
+              }
+            }
+            return out;
+          })(),
         };
       }),
     });
